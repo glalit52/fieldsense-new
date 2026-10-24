@@ -37,6 +37,8 @@ To persist this data across service redeployments and restarts:
    ```
 5. Click **Add**. Railway will mount persistent SSD storage at `/app/data`.
 
+> **Automatic Self-Healing**: The `/app/data` directory and `fieldsense.db` database are **automatically created on boot** if not already present. Even if deployed initially without a volume, FieldSense automatically initializes the folder, sets up write validation, runs WAL-mode SQLite schemas, and exposes database stats at `/api/health`.
+
 ---
 
 ## 3. Environment Variables Configuration

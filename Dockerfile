@@ -37,13 +37,11 @@ COPY --from=build /app/web/package.json ./web/
 # Install only production dependencies for the server workspace and prepare data directory
 RUN npm ci --omit=dev --workspace server && \
     mkdir -p /app/data && \
-    chown -R node:node /app
+    chown -R node:node /app && \
+    chmod 777 /app/data
 
 # Expose server port (Railway overrides PORT dynamically at runtime)
 EXPOSE 8787
-
-# Mount persistent volume for SQLite cache and saved fields across restarts/deployments
-VOLUME ["/app/data"]
 
 # Switch to non-root user for security
 USER node

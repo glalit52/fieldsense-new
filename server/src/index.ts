@@ -8,7 +8,7 @@ import { agrisMode, ask } from "./agris.ts";
 import { config, integrationStatus } from "./config.ts";
 import { CROPS } from "./engine/crops.ts";
 import { cachedReport, landHealth, type Report, type ReportInput } from "./engine/report.ts";
-import { cached, DAY, db, closeDb } from "./lib/cache.ts";
+import { cached, DAY, db, closeDb, getDbStats } from "./lib/cache.ts";
 import { centroid, type Ring } from "./lib/geo.ts";
 import { pool } from "./lib/http.ts";
 import * as gee from "./providers/gee.ts";
@@ -72,6 +72,7 @@ app.get("/api/health", async () => ({
   contact: config.contactEmail,
   uptime: Math.round(process.uptime()),
   timestamp: new Date().toISOString(),
+  database: getDbStats(),
   integrations: integrationStatus(),
   agris: agrisMode(),
   crops: CROPS.length,

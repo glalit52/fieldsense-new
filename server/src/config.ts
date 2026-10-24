@@ -6,7 +6,7 @@ const env = process.env;
 
 export const config = {
   port: Number(env.PORT ?? 8787),
-  dataDir: env.DATA_DIR ? path.resolve(env.DATA_DIR) : path.resolve(here, "../../data"),
+  dataDir: path.resolve(here, "../..", env.DATA_DIR || "data"),
   webDist: env.WEB_DIST ? path.resolve(env.WEB_DIST) : path.resolve(here, "../../web/dist"),
   anthropicKey: env.ANTHROPIC_API_KEY || "",
   agrisModel: env.AGRIS_MODEL || "claude-opus-5-5",
