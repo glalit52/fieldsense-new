@@ -1,0 +1,14 @@
+node_modules
+web/node_modules
+server/node_modules
+web/dist
+data
+.env
+.env.*
+!.env.example
+.git
+.gitignore
+*.log
+.DS_Store
+.system_generated
+coverage

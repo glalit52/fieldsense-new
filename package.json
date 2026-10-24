@@ -1,0 +1,19 @@
+{
+  "name": "fieldsense",
+  "private": true,
+  "workspaces": [
+    "server",
+    "web"
+  ],
+  "scripts": {
+    "dev": "npm run dev --workspace server & npm run dev --workspace web",
+    "build": "npm run build --workspace web",
+    "start": "npm run build --workspace web && npm run start --workspace server",
+    "test": "npm test --workspace server",
+    "typecheck": "npm run typecheck --workspace server && npm run typecheck --workspace web",
+    "bench": "node --experimental-strip-types server/test/bench.ts"
+  },
+  "engines": {
+    "node": ">=22.6.0"
+  }
+}
