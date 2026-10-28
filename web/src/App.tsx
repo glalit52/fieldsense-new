@@ -14,19 +14,20 @@ import Account from "./components/Account.tsx";
 import AuthDialog from "./components/AuthDialog.tsx";
 import AuthPage from "./components/AuthPage.tsx";
 import Modal from "./components/Modal.tsx";
-import { api, runReport, type CheckInput, type LonLat, type Report, type SavedField, type User } from "./lib/api.ts";
+import Admin from "./components/Admin.tsx";
+import { api, ApiError, LOCAL_USER, onUnauthorized, runReport, type CheckInput, type LonLat, type Report, type SavedField, type User } from "./lib/api.ts";
 
 const TABS = [
   ["overview", "Overview"], ["soil", "Soil & lime"], ["crops", "Crops"], ["ops", "Next 16 days"], ["climate", "Climate"],
   ["land", "Land health"], ["satellite", "Satellite"], ["future", "2045 outlook"],
 ] as const;
 type Tab = (typeof TABS)[number][0];
-type View = "check" | "fields" | "account";
+type View = "check" | "fields" | "account" | "admin";
 
 const DEFAULT_CONTACT = "lalit@sensegrass.com";
 
 /** Headline numbers kept with a saved field for the fields list. */
-const summaryOf = (r: Report) => ({ ...r.summary, headline: r.headline, checkedAt: r.generatedAt });
+const summaryOf = (r: Report) => ({ ...r.summary, headline: r.headline, checkedAt: r.generatedAt, areaHa: r.location.areaHa ?? null });
 
 /** Shareable link state: ?lat=&lon= for a pin, plus p=lon,lat;… for an outline. */
 function readLink(): { lat: number; lon: number; polygon?: LonLat[] } | null {
@@ -67,6 +68,9 @@ export default function App() {
   /** The saved field the current report belongs to, so re-checking it updates it instead of saving a duplicate. */
   const [activeFieldId, setActiveFieldId] = useState<string>();
   const [notice, setNotice] = useState("");
+  /** Set when the server or the accounts database can't be reached at boot; the user can retry. */
+  const [bootError, setBootError] = useState("");
+  const [bootTry, setBootTry] = useState(0);
 
   const accountsOn = Boolean(health?.accounts?.enabled ?? true);
   const contact: string = health?.contact ?? DEFAULT_CONTACT;
@@ -80,26 +84,56 @@ export default function App() {
     return () => window.removeEventListener("popstate", handlePopState);
   }, []);
 
-  // Restore session on boot
+  const goTo = (path: string) => {
+    if (window.location.pathname !== path) window.history.replaceState(null, "", path + (path === "/" ? window.location.search : ""));
+    setPathname(path);
+  };
+
+  // Restore session on boot. Health comes first: without accounts on the server there is nothing to sign in to.
   useEffect(() => {
-    api.health().then(setHealth).catch(() => {});
-    api.me()
-      .then((u) => {
+    let cancelled = false;
+    setBootError("");
+    (async () => {
+      let h: any;
+      try { h = await api.health(); } catch {
+        if (!cancelled) setBootError("Can't reach the FieldSense server. Check your connection and try again.");
+        return;
+      }
+      if (cancelled) return;
+      setHealth(h);
+      if (!h?.accounts?.enabled) {
+        setUser(LOCAL_USER);
+        if (window.location.pathname === "/login" || window.location.pathname === "/signup") goTo("/");
+        return;
+      }
+      try {
+        const u = await api.me();
+        if (cancelled) return;
         setUser(u);
         // If logged in, do not give access to login or signup!
-        if (window.location.pathname === "/login" || window.location.pathname === "/signup") {
-          window.history.replaceState(null, "", "/");
-          setPathname("/");
+        if (window.location.pathname === "/login" || window.location.pathname === "/signup") goTo("/");
+      } catch (e) {
+        if (cancelled) return;
+        if (e instanceof ApiError && e.status === 401) {
+          setUser(null);
+          // If not logged in, redirect to login page
+          if (window.location.pathname !== "/signup") goTo("/login");
+        } else {
+          setBootError(e instanceof Error ? e.message : "Accounts are temporarily unavailable.");
         }
-      })
-      .catch(() => {
-        setUser(null);
-        // If not logged in, redirect to login page
-        if (window.location.pathname !== "/signup") {
-          window.history.replaceState(null, "", "/login");
-          setPathname("/login");
-        }
-      });
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [bootTry]);
+
+  // A session that expires or is revoked mid-use sends the user back to sign-in instead of failing silently.
+  useEffect(() => {
+    onUnauthorized(() => {
+      setUser(null); setFields([]); setActiveFieldId(undefined); setView("check");
+      setNotice("Your session has ended. Please sign in again.");
+      goTo("/login");
+    });
+    return () => onUnauthorized(null);
   }, []);
 
 
@@ -180,9 +214,20 @@ export default function App() {
     setFields([]);
     setActiveFieldId(undefined);
     setView("check");
-    window.history.replaceState(null, "", "/login");
-    setPathname("/login");
+    goTo("/login");
   };
+
+  // 0. Server or accounts database unreachable
+  if (bootError && user === undefined) {
+    return (
+      <div className="session-loader">
+        <span className="session-loader-diamond">◆</span>
+        <h2>FieldSense</h2>
+        <p className="form-error" role="alert">{bootError}</p>
+        <button className="primary" onClick={() => setBootTry((n) => n + 1)}>Try again</button>
+      </div>
+    );
+  }
 
   // 1. Session check in progress
   if (user === undefined) {
@@ -200,10 +245,12 @@ export default function App() {
     return (
       <AuthPage
         initialMode={pathname === "/signup" ? "signup" : "login"}
+        contact={contact}
+        notice={notice}
         onSuccess={(u) => {
           setUser(u);
-          window.history.replaceState(null, "", "/");
-          setPathname("/");
+          setNotice("");
+          goTo("/");
         }}
       />
     );
@@ -223,12 +270,22 @@ export default function App() {
             My fields ({fields.length})
           </button>
           {report && <button className="agris-btn" onClick={() => setChatOpen((o) => !o)}>💬 Ask Agris</button>}
-          <div className="user-profile-badge" title={user.email}>
-            <span className="user-avatar-dot" />
-            <span>{user.name}</span>
-          </div>
-          <button className={view === "account" ? "active" : ""} onClick={() => setView("account")} title="Account Settings">⚙ Settings</button>
-          <button className="user-signout-btn" onClick={signedOut} title="Sign out of FieldSense">Sign out</button>
+          {accountsOn ? (
+            <>
+              {user.role === "admin" && <button className={view === "admin" ? "active" : ""} onClick={() => setView("admin")}>Admin</button>}
+              <div className="user-profile-badge" title={user.email}>
+                <span className="user-avatar-dot" />
+                <span>{user.name}</span>
+              </div>
+              <button className={view === "account" ? "active" : ""} onClick={() => setView("account")} title="Account Settings">⚙ Settings</button>
+              <button className="user-signout-btn" onClick={signedOut} title="Sign out of FieldSense">Sign out</button>
+            </>
+          ) : (
+            <div className="user-profile-badge" title="Accounts are off on this server: saved fields are shared by everyone using it">
+              <span className="user-avatar-dot" />
+              <span>{user.name}</span>
+            </div>
+          )}
           <a href={`mailto:${contact}`} className="contact-link" title="Contact SenseGrass">✉ {contact}</a>
         </nav>
       </header>
@@ -252,10 +309,12 @@ export default function App() {
         </section>
 
         <section className="right">
-          {view === "account" && user ? (
+          {view === "admin" && user.role === "admin" ? (
+            <Admin me={user} />
+          ) : view === "account" && accountsOn ? (
             <Account user={user} onUser={setUser} onSignedOut={signedOut} />
           ) : view === "fields" && canUseFields ? (
-            <Fields fields={fields} activeId={activeFieldId} onOpen={openSaved} onChange={refreshFields} />
+            <Fields fields={fields} activeId={activeFieldId} onOpen={openSaved} onChange={refreshFields} onNotice={setNotice} />
           ) : busy ? (
             <div className="progress card">
               <h2>Reading your field…</h2>

@@ -88,6 +88,21 @@ db.exec(`
     notes TEXT
   );
   CREATE INDEX IF NOT EXISTS idx_soil_tests_field_id ON soil_tests(field_id);
+
+  CREATE TABLE IF NOT EXISTS activities (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    field_id TEXT NOT NULL,
+    date TEXT NOT NULL,
+    type TEXT NOT NULL,
+    crop TEXT,
+    product TEXT,
+    quantity REAL,
+    unit TEXT,
+    cost REAL,
+    yield_t_per_ha REAL,
+    notes TEXT
+  );
+  CREATE INDEX IF NOT EXISTS idx_activities_field_id ON activities(field_id);
 `);
 
 /** Clean up expired cache items to prevent database bloat over time. */
@@ -146,6 +161,7 @@ export function getDbStats() {
     const stats = fs.statSync(dbFilePath);
     const fieldsCount = (db.prepare("SELECT COUNT(*) as c FROM fields").get() as any)?.c ?? 0;
     const testsCount = (db.prepare("SELECT COUNT(*) as c FROM soil_tests").get() as any)?.c ?? 0;
+    const activitiesCount = (db.prepare("SELECT COUNT(*) as c FROM activities").get() as any)?.c ?? 0;
     const cacheCount = (db.prepare("SELECT COUNT(*) as c FROM cache").get() as any)?.c ?? 0;
     const journalMode = (db.prepare("PRAGMA journal_mode").get() as any)?.journal_mode ?? "unknown";
     return {
@@ -155,6 +171,7 @@ export function getDbStats() {
       sizeBytes: stats.size,
       fieldsCount,
       testsCount,
+      activitiesCount,
       cacheEntries: cacheCount,
       journalMode,
     };

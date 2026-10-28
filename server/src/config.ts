@@ -8,6 +8,11 @@ const list = (v?: string) => (v ?? "").split(",").map((s) => s.trim()).filter(Bo
 export const config = {
   production: env.NODE_ENV === "production",
   port: Number(env.PORT ?? 8787),
+  /** "::" accepts IPv4 and IPv6; falls back to 0.0.0.0 where IPv6 is off (see index.ts). */
+  host: env.HOST || "::",
+  /** Build identity shown in /api/health: Railway's commit SHA when deployed, else the package version. */
+  version: env.RAILWAY_GIT_COMMIT_SHA?.slice(0, 7) || env.APP_VERSION || "1.1.0",
+  environment: env.RAILWAY_ENVIRONMENT_NAME || env.NODE_ENV || "development",
   dataDir: path.resolve(here, "../..", env.DATA_DIR || "data"),
   webDist: env.WEB_DIST ? path.resolve(env.WEB_DIST) : path.resolve(here, "../../web/dist"),
   /** Accounts and per-user fields are switched on by MONGO_URI; without it saved fields live in local SQLite (single user). */
@@ -17,8 +22,9 @@ export const config = {
   authTokenKey: env.AUTH_TOKEN_KEY || env.VITE_AUTH_TOKEN_KEY || env.TOKEN_KEY || "fieldsense_auth_token",
   authCookieName: env.AUTH_COOKIE_NAME || env.SESSION_COOKIE_NAME || "fs_session",
   /** Browser origins allowed to call the API cross-origin. Empty = same-origin only (the API serves the web app). */
-
   corsOrigins: list(env.CORS_ORIGINS),
+  /** Accounts with these emails get the admin role (user list, usage stats). */
+  adminEmails: list(env.ADMIN_EMAILS).map((e) => e.toLowerCase()),
   apiKeys: list(env.API_KEYS),
   anthropicKey: env.ANTHROPIC_API_KEY || "",
   agrisModel: env.AGRIS_MODEL || "claude-opus-5-5",

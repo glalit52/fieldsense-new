@@ -1,11 +1,12 @@
 import type { FastifyReply, FastifyRequest } from "fastify";
 import jwt from "jsonwebtoken";
 import { config } from "../config.ts";
-import { User, type UserDoc } from "../models/User.ts";
+import { isAdmin, User, type UserDoc } from "../models/User.ts";
 import { isMongoConnected } from "./mongoose.ts";
 import { HttpError } from "./validate.ts";
 
 export const SESSION_COOKIE = config.authCookieName;
+const crossSite = config.production && config.corsOrigins.length > 0;
 
 declare module "fastify" {
   interface FastifyRequest {
@@ -70,14 +71,15 @@ export function setSession(reply: FastifyReply, token: string) {
   reply.setCookie(config.authCookieName, token, {
     path: "/",
     httpOnly: true,
-    sameSite: "lax",
-    secure: config.production,
+    // A web app on another origin (CORS_ORIGINS) only gets the cookie back with SameSite=None, which requires Secure.
+    sameSite: crossSite ? "none" : "lax",
+    secure: config.production || crossSite,
     expires: exp,
   });
 }
 
 export function clearSession(reply: FastifyReply) {
-  reply.clearCookie(config.authCookieName, { path: "/" });
+  reply.clearCookie(config.authCookieName, { path: "/", sameSite: crossSite ? "none" : "lax", secure: config.production || crossSite });
 }
 
 /** Extracts token dynamically from headers, dynamic token key header, dynamic cookie, or query */
@@ -94,15 +96,8 @@ export function tokenOf(req: FastifyRequest): string | undefined {
   const xAuth = (req.headers["x-auth-token"] || req.headers["x-token-key"]) as string | undefined;
   if (xAuth) return xAuth.trim();
 
-  // Dynamic cookie
-  const cookieToken = req.cookies[config.authCookieName] || req.cookies[config.authTokenKey];
-  if (cookieToken) return cookieToken;
-
-  // Dynamic query parameter fallback
-  const qToken = (req.query as any)?.[config.authTokenKey] || (req.query as any)?.token;
-  if (typeof qToken === "string" && qToken) return qToken;
-
-  return undefined;
+  // Dynamic cookie. Tokens are never read from the query string: URLs end up in logs, history and Referer headers.
+  return req.cookies[config.authCookieName] || req.cookies[config.authTokenKey] || undefined;
 }
 
 
@@ -129,5 +124,10 @@ export async function requireAuth(req: FastifyRequest) {
   const user = token ? await userFromToken(token) : null;
   if (!user) throw new HttpError(401, "Please sign in to continue.");
   req.user = user;
+}
+
+export async function requireAdmin(req: FastifyRequest) {
+  await requireAuth(req);
+  if (!isAdmin(req.user!)) throw new HttpError(403, "Admins only");
 }
 

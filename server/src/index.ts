@@ -7,8 +7,14 @@ import { closeMongo, connectMongo } from "./lib/mongoose.ts";
 assertConfig();
 const app = await buildApp();
 
-await app.listen({ port: config.port, host: "0.0.0.0" });
-app.log.info(`FieldSense API on :${config.port} — Agris: ${agrisMode()} — accounts: ${authEnabled() ? "on" : "off"} — contact: ${config.contactEmail}`);
+try {
+  await app.listen({ port: config.port, host: config.host });
+} catch (e: any) {
+  // Hosts with IPv6 disabled can't bind "::"; fall back to IPv4 rather than failing the deploy.
+  if (config.host !== "::" || !["EAFNOSUPPORT", "EADDRNOTAVAIL"].includes(e.code)) throw e;
+  await app.listen({ port: config.port, host: "0.0.0.0" });
+}
+app.log.info(`FieldSense ${config.version} (${config.environment}) on :${config.port} — Agris: ${agrisMode()} — accounts: ${authEnabled() ? "on" : "off"} — contact: ${config.contactEmail}`);
 if (!dataPersistent) app.log.warn("SQLite is not on the configured DATA_DIR; caches and saved fields will be lost on redeploy (see RAILWAY.md, Volumes).");
 if (config.production && !authEnabled()) app.log.warn("Accounts are off (no MONGO_URI): saved fields are shared by everyone who can reach this server.");
 // Listen first so the platform health check passes while the database is still connecting.

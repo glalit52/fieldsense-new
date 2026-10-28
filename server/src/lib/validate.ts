@@ -73,3 +73,27 @@ export function parseSoilTest(b: any): SoilTestInput {
   if ([t.ph, t.organicCarbon, t.clay, t.p, t.k].every((v) => v == null)) throw badRequest("Enter at least one lab value");
   return t;
 }
+
+/** Farm operations recorded against a field: the season's journal, with costs and harvested yield. */
+export const ACTIVITY_TYPES = ["sowing", "fertiliser", "spraying", "irrigation", "tillage", "scouting", "harvest", "other"] as const;
+export type ActivityType = (typeof ACTIVITY_TYPES)[number];
+export interface ActivityInput {
+  date: string; type: ActivityType; crop: string; product: string; quantity?: number; unit: string; cost?: number; yieldTPerHa?: number; notes: string;
+}
+
+export function parseActivity(b: any): ActivityInput {
+  const date = str(b?.date, 10) || new Date().toISOString().slice(0, 10);
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) throw badRequest("date must be YYYY-MM-DD");
+  const type = str(b?.type, 20).toLowerCase() as ActivityType;
+  if (!ACTIVITY_TYPES.includes(type)) throw badRequest(`type must be one of ${ACTIVITY_TYPES.join(", ")}`);
+  return {
+    date, type,
+    crop: str(b?.crop, 80),
+    product: str(b?.product, 120),
+    quantity: optNum(b?.quantity, "quantity", 0, 1e7),
+    unit: str(b?.unit, 20),
+    cost: optNum(b?.cost, "cost", 0, 1e9),
+    yieldTPerHa: type === "harvest" ? optNum(b?.yieldTPerHa, "yield t/ha", 0, 200) : undefined,
+    notes: str(b?.notes, 1000),
+  };
+}

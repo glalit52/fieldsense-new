@@ -1,6 +1,6 @@
 # Deploying FieldSense on Railway
 
-FieldSense ships as one Docker container: the Fastify API also serves the built React app. `railway.json` tells Railway to build the `Dockerfile` and health-check `/api/health`.
+FieldSense deploys as **one Railway service from the root `Dockerfile`**: the build compiles the React app, and the Fastify API serves it alongside `/api`. Frontend and backend share one origin, so sign-in cookies, streamed reports and Agris chat work with no CORS or URL wiring. `railway.json` tells Railway to build the `Dockerfile` and health-check `/api/health`.
 
 ## 1. Create the service
 
@@ -40,6 +40,7 @@ Without `MONGO_URI`, saved fields are shared by everyone who can open the site. 
 | `MONGO_URI` | MongoDB connection string, e.g. MongoDB Atlas `mongodb+srv://USER:PASSWORD@cluster.example.mongodb.net/fieldsense`. Railway's MongoDB plugin works too: reference its `MONGO_URL` as `${{MongoDB.MONGO_URL}}`. |
 | `JWT_SECRET` | **Required with `MONGO_URI`.** At least 32 random characters: `openssl rand -hex 32`. The server refuses to start in production without it. Changing it signs everyone out. |
 | `JWT_EXPIRES_IN` | Session length, default `7d`. |
+| `ADMIN_EMAILS` | Comma-separated emails that get the **Admin** page (usage stats, user list, roles). Sign up with one of these addresses. |
 
 **MongoDB Atlas network access:** Railway does not have fixed outbound IPs on most plans, so in Atlas → Network Access allow `0.0.0.0/0` (access is still protected by the database user's password), or use Railway's static outbound IPs if your plan has them. If the database is unreachable, the app keeps serving field checks; sign-in returns 503 and the server retries the connection with backoff. `GET /api/health` shows `accounts.connected`.
 
@@ -56,11 +57,14 @@ Without `MONGO_URI`, saved fields are shared by everyone who can open the site. 
 | `API_KEYS` | Comma-separated keys for `POST /api/v1/batch` (`x-api-key` header). Leave empty only if the batch API should be open. |
 | `CORS_ORIGINS` | Other websites allowed to call the API from a browser. Not needed for the bundled web app. |
 | `LOG_LEVEL` | `info` (default), `warn`, `debug`. |
+| `HOST` | Bind address, default `::` (IPv4 + IPv6). Falls back to `0.0.0.0` where IPv6 is off. |
 
 ## 4. What the deployment does
 
 - **Build:** multi-stage Dockerfile. The web app is built in one stage, the server's production dependencies are installed in another, and the final image holds only `server/src`, production `node_modules` and `web/dist`.
-- **Health check:** `/api/health` returns 200 as long as the process serves requests. A MongoDB or upstream-API outage shows in the response body rather than failing the deploy.
+- **Health check:** `/api/health` returns 200 as long as the process serves requests. A MongoDB or upstream-API outage shows in the response body rather than failing the deploy. It also reports `version` (the deployed commit) and `environment`.
+- **Readiness:** `/api/ready` returns 503 while SQLite or (with accounts) MongoDB is unavailable. Point an external uptime monitor at it; keep Railway's health check on `/api/health`.
+- **Without accounts:** the app opens straight into a shared "Local workspace" (no sign-in page). With `MONGO_URI` set, it requires sign-in.
 - **Shutdown:** on `SIGTERM` the server stops accepting connections, closes MongoDB and SQLite, and exits; `drainingSeconds: 15` gives it time. It force-exits after 10 s if something hangs.
 - **Behind Railway's proxy:** `trustProxy` is on, so rate limits key on the real client IP. Session cookies are `HttpOnly`, `SameSite=Lax` and `Secure`. HSTS is sent in production.
 - **Caching:** fingerprinted assets are served `immutable` for a year and `index.html` is `no-cache`, so a deploy is picked up on the next page load. JSON responses and the streamed report are gzipped.
@@ -72,6 +76,16 @@ Without `MONGO_URI`, saved fields are shared by everyone who can open the site. 
 - [ ] Open the site, drop a pin, press **Check this field**.
 - [ ] With accounts: create an account, save the field, redeploy, sign in again: the field is still there.
 - [ ] Without accounts: save a field, redeploy: it is still there (confirms the volume).
+- [ ] With `ADMIN_EMAILS`: sign up with that address; the **Admin** tab shows user and usage stats.
+
+## Troubleshooting
+
+| Symptom | Cause and fix |
+|---|---|
+| Deploy fails health check | Look at the deploy logs. With `MONGO_URI` set and no `JWT_SECRET` (32+ characters), the server refuses to start on purpose. |
+| `database.persistent: false` | No volume at `/app/data`. Add one (step 2). |
+| Sign-in says "Accounts are temporarily unavailable" | MongoDB unreachable. Check `MONGO_URI` and the Atlas IP allow-list; `accounts.connected` in `/api/health` turns `true` once connected. |
+| Reports are slow or fail with HTTP 429 | Open-Meteo free-tier limit. Set `OPEN_METEO_API_KEY`. |
 
 ## Running the same image locally
 

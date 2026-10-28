@@ -90,3 +90,41 @@ test("field summaries are capped", async () => {
   const res = await app.inject({ method: "POST", url: "/api/fields", payload: { lat: 1, lon: 1, summary: { blob: "x".repeat(30_000) } } });
   assert.equal(res.statusCode, 400);
 });
+
+test("readiness is 200 when SQLite is up and accounts are off", async () => {
+  const res = await app.inject("/api/ready");
+  assert.equal(res.statusCode, 200);
+  assert.equal(res.json().ready, true);
+});
+
+test("field journal: activities are validated, newest first, and removed with the field", async () => {
+  const f = (await app.inject({ method: "POST", url: "/api/fields", payload: { name: "Journal", lat: -36.6, lon: 142.1 } })).json();
+  assert.deepEqual(f.activities, []);
+  const bad = await app.inject({ method: "POST", url: `/api/fields/${f.id}/activities`, payload: { date: "2026-05-01", type: "dancing" } });
+  assert.equal(bad.statusCode, 400);
+  await app.inject({ method: "POST", url: `/api/fields/${f.id}/activities`, payload: { date: "2026-05-01", type: "sowing", crop: "Wheat", quantity: "100", unit: "kg/ha", cost: 80 } });
+  const res = await app.inject({ method: "POST", url: `/api/fields/${f.id}/activities`, payload: { date: "2026-11-20", type: "Harvest", crop: "Wheat", yieldTPerHa: 4.2 } });
+  assert.equal(res.statusCode, 201);
+  const acts = res.json().activities;
+  assert.deepEqual(acts.map((a: any) => a.type), ["harvest", "sowing"]);
+  assert.equal(acts[0].yieldTPerHa, 4.2);
+  assert.equal(acts[1].quantity, 100);
+  assert.equal(acts[1].cost, 80);
+
+  const left = (await app.inject({ method: "DELETE", url: `/api/fields/${f.id}/activities/${acts[1].id}` })).json();
+  assert.equal(left.activities.length, 1);
+  await app.inject({ method: "DELETE", url: `/api/fields/${f.id}` });
+  const { db } = await import("../src/lib/cache.ts");
+  assert.equal((db.prepare("SELECT COUNT(*) AS c FROM activities WHERE field_id = ?").get(f.id) as any).c, 0);
+});
+
+test("bulk import validates every row before writing", async () => {
+  const before = (await app.inject("/api/fields")).json().length;
+  const bad = await app.inject({ method: "POST", url: "/api/fields/import", payload: { fields: [{ name: "ok", lat: 1, lon: 1 }, { name: "bad", lat: 999, lon: 1 }] } });
+  assert.equal(bad.statusCode, 400);
+  assert.match(bad.json().error, /Row 2/);
+  assert.equal((await app.inject("/api/fields")).json().length, before, "nothing written");
+  const ok = await app.inject({ method: "POST", url: "/api/fields/import", payload: { fields: [{ name: "A", lat: 1, lon: 1 }, { name: "B", polygon: square }] } });
+  assert.equal(ok.statusCode, 201);
+  assert.equal(ok.json().created, 2);
+});

@@ -1,5 +1,6 @@
 import mongoose, { Schema, type HydratedDocument, type Model } from "mongoose";
 import bcrypt from "bcryptjs";
+import { config } from "../config.ts";
 
 export interface UserAttrs {
   name: string;
@@ -48,7 +49,11 @@ userSchema.methods.comparePassword = function (candidate: string) {
 
 export const User = (mongoose.models.User as Model<UserAttrs, {}, UserMethods>) ?? mongoose.model("User", userSchema);
 
+/** Admin by stored role or by ADMIN_EMAILS, so the first admin needs no database edit. */
+export const isAdmin = (u: Pick<UserAttrs, "role" | "email">) => u.role === "admin" || config.adminEmails.includes(u.email);
+
 /** The user as the API returns it: never the password hash. */
 export const publicUser = (u: UserDoc) => ({
-  id: String(u._id), name: u.name, email: u.email, organization: u.organization ?? "", role: u.role, createdAt: u.createdAt,
+  id: String(u._id), name: u.name, email: u.email, organization: u.organization ?? "", role: isAdmin(u) ? "admin" : u.role,
+  createdAt: u.createdAt, lastLogin: u.lastLogin ?? null,
 });

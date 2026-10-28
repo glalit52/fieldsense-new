@@ -54,6 +54,8 @@ export async function analysisRoutes(app: FastifyInstance) {
     ok: true,
     status: "healthy",
     service: "FieldSense",
+    version: config.version,
+    environment: config.environment,
     contact: config.contactEmail,
     uptime: Math.round(process.uptime()),
     timestamp: new Date().toISOString(),
@@ -63,6 +65,13 @@ export async function analysisRoutes(app: FastifyInstance) {
     agris: agrisMode(),
     crops: CROPS.length,
   }));
+
+  /** Readiness: 503 while a required dependency is down. Use for uptime monitors; the platform health check stays on /api/health. */
+  app.get("/api/ready", { config: { rateLimit: false } }, async (_req, reply) => {
+    const sqlite = getDbStats().status === "connected";
+    const mongo = !authEnabled() || isMongoConnected();
+    return reply.code(sqlite && mongo ? 200 : 503).send({ ready: sqlite && mongo, sqlite, accounts: mongo });
+  });
 
   app.get("/api/contact", async () => ({ email: config.contactEmail, organization: "SenseGrass", support: `mailto:${config.contactEmail}` }));
 

@@ -3,10 +3,17 @@ import { api, type User } from "../lib/api.ts";
 
 interface AuthPageProps {
   initialMode?: "login" | "signup";
+  contact?: string;
+  /** Shown above the form, e.g. why the user was signed out. */
+  notice?: string;
   onSuccess: (user: User) => void;
 }
 
-export default function AuthPage({ initialMode = "login", onSuccess }: AuthPageProps) {
+/** Must match PASSWORD_MIN on the server (server/src/models/User.ts). */
+const PASSWORD_MIN = 8;
+const DEV = Boolean((import.meta as any).env?.DEV);
+
+export default function AuthPage({ initialMode = "login", contact = "lalit@sensegrass.com", notice, onSuccess }: AuthPageProps) {
   const [mode, setMode] = useState<"login" | "signup">(initialMode);
   const [form, setForm] = useState({
     name: "",
@@ -48,8 +55,8 @@ export default function AuthPage({ initialMode = "login", onSuccess }: AuthPageP
           setBusy(false);
           return;
         }
-        if (!form.password || form.password.length < 6) {
-          setError("Password must be at least 6 characters long");
+        if (!form.password || form.password.length < PASSWORD_MIN) {
+          setError(`Password must be at least ${PASSWORD_MIN} characters long`);
           setBusy(false);
           return;
         }
@@ -117,6 +124,8 @@ export default function AuthPage({ initialMode = "login", onSuccess }: AuthPageP
             </button>
           </div>
 
+          {notice && !error && <p className="muted small" role="status">{notice}</p>}
+
           {error && (
             <div className="auth-error-banner" role="alert">
               <span className="auth-error-icon">⚠️</span>
@@ -164,7 +173,7 @@ export default function AuthPage({ initialMode = "login", onSuccess }: AuthPageP
             <div className="auth-field">
               <div className="auth-field-header">
                 <label htmlFor="auth-password">Password</label>
-                {mode === "signup" && <span className="auth-hint">Min 6 characters</span>}
+                {mode === "signup" && <span className="auth-hint">Min {PASSWORD_MIN} characters</span>}
               </div>
               <div className="auth-input-group">
                 <span className="auth-input-icon">🔒</span>
@@ -172,7 +181,7 @@ export default function AuthPage({ initialMode = "login", onSuccess }: AuthPageP
                   id="auth-password"
                   type={showPassword ? "text" : "password"}
                   required
-                  minLength={mode === "signup" ? 6 : undefined}
+                  minLength={mode === "signup" ? PASSWORD_MIN : undefined}
                   maxLength={200}
                   autoComplete={mode === "login" ? "current-password" : "new-password"}
                   placeholder="••••••••"
@@ -224,12 +233,14 @@ export default function AuthPage({ initialMode = "login", onSuccess }: AuthPageP
             </button>
           </form>
 
-          {/* Quick Demo Credentials for Fast Testing */}
-          <div className="auth-demo-shortcut">
-            <button type="button" className="auth-demo-btn" onClick={prefillDemo}>
-              ⚡ Quick Fill Demo Account
-            </button>
-          </div>
+          {/* Quick Demo Credentials for Fast Testing (development builds only: the account doesn't exist in production) */}
+          {DEV && (
+            <div className="auth-demo-shortcut">
+              <button type="button" className="auth-demo-btn" onClick={prefillDemo}>
+                ⚡ Quick Fill Demo Account
+              </button>
+            </div>
+          )}
 
           <div className="auth-footer-toggle">
             {mode === "login" ? (
@@ -266,8 +277,8 @@ export default function AuthPage({ initialMode = "login", onSuccess }: AuthPageP
 
         <div className="auth-page-footer">
           <span>Powered by SenseGrass Inc. · Enterprise Agricultural Intelligence</span>
-          <a href="mailto:lalit@sensegrass.com" className="auth-support-link">
-            Need support? lalit@sensegrass.com
+          <a href={`mailto:${contact}`} className="auth-support-link">
+            Need support? {contact}
           </a>
         </div>
       </div>

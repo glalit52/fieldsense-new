@@ -6,6 +6,7 @@ import cors from "@fastify/cors";
 import rateLimit from "@fastify/rate-limit";
 import fstatic from "@fastify/static";
 import { config } from "./config.ts";
+import { adminRoutes } from "./routes/admin.ts";
 import { analysisRoutes } from "./routes/analysis.ts";
 import { authRoutes } from "./routes/auth.ts";
 import { batchRoutes } from "./routes/batch.ts";
@@ -44,6 +45,7 @@ export async function buildApp(opts: { logger?: FastifyServerOptions["logger"] }
   await app.register(authRoutes);
   await app.register(fieldRoutes);
   await app.register(batchRoutes);
+  await app.register(adminRoutes);
 
   // ---------- the built web app ----------
   const hasWeb = fs.existsSync(config.webDist);

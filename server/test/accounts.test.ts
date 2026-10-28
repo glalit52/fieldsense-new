@@ -14,7 +14,7 @@ const dir = fs.mkdtempSync(path.join(os.tmpdir(), "fieldsense-acct-"));
 
 before(async () => {
   mongo = await MongoMemoryServer.create();
-  Object.assign(process.env, { DATA_DIR: dir, MONGO_URI: mongo.getUri("fieldsense"), JWT_SECRET: "t".repeat(40), WEB_DIST: path.join(dir, "no-web") });
+  Object.assign(process.env, { DATA_DIR: dir, MONGO_URI: mongo.getUri("fieldsense"), JWT_SECRET: "t".repeat(40), ADMIN_EMAILS: "boss@example.com", WEB_DIST: path.join(dir, "no-web") });
   const { buildApp } = await import("../src/app.ts");
   const m = await import("../src/lib/mongoose.ts");
   closeMongo = m.closeMongo;
@@ -101,4 +101,41 @@ test("password change signs out older sessions; account deletion removes fields"
   assert.equal((await app.inject({ url: "/api/auth/me", headers: { cookie: fresh } })).statusCode, 401);
   const { Field } = await import("../src/models/Field.ts");
   assert.equal(await Field.countDocuments({}), 1, "only owner-a's field remains");
+});
+
+test("tokens in the query string are ignored", async () => {
+  const { cookie } = await signup("query@example.com");
+  const token = cookie.split("=")[1];
+  assert.equal((await app.inject(`/api/auth/me?token=${token}`)).statusCode, 401);
+});
+
+/** Reused below: sign-up is limited to 10/min per IP, which this suite would otherwise exceed. */
+let plain: Awaited<ReturnType<typeof signup>>, boss: typeof plain;
+test("admin endpoints are for admins only; ADMIN_EMAILS grants the role", async () => {
+  plain = await signup("plain@example.com");
+  assert.equal((await app.inject({ url: "/api/admin/stats", headers: { cookie: plain.cookie } })).statusCode, 403);
+  boss = await signup("boss@example.com");
+  assert.equal(boss.user.role, "admin");
+  const stats = (await app.inject({ url: "/api/admin/stats", headers: { cookie: boss.cookie } })).json();
+  assert.ok(stats.users >= 2);
+  const list = (await app.inject({ url: "/api/admin/users?q=plain", headers: { cookie: boss.cookie } })).json();
+  assert.equal(list.total, 1);
+  assert.equal(list.users[0].email, "plain@example.com");
+  assert.equal(list.users[0].password, undefined);
+  const promoted = await app.inject({ method: "PATCH", url: `/api/admin/users/${plain.user.id}`, headers: { cookie: boss.cookie }, payload: { role: "admin" } });
+  assert.equal(promoted.json().user.role, "admin");
+  assert.equal((await app.inject({ url: "/api/admin/stats", headers: { cookie: plain.cookie } })).statusCode, 200);
+  const self = await app.inject({ method: "PATCH", url: `/api/admin/users/${plain.user.id}`, headers: { cookie: plain.cookie }, payload: { role: "user" } });
+  assert.equal(self.statusCode, 400, "can't demote yourself");
+});
+
+test("activities are private to the field's owner", async () => {
+  const a = boss, b = plain;
+  const f = (await app.inject({ method: "POST", url: "/api/fields", headers: { cookie: a.cookie }, payload: { name: "F", lat: 1, lon: 1 } })).json();
+  const res = await app.inject({ method: "POST", url: `/api/fields/${f.id}/activities`, headers: { cookie: a.cookie }, payload: { date: "2026-06-01", type: "spraying", product: "Glyphosate", cost: 12.5 } });
+  assert.equal(res.statusCode, 201);
+  assert.equal(res.json().activities[0].product, "Glyphosate");
+  assert.equal((await app.inject({ method: "POST", url: `/api/fields/${f.id}/activities`, headers: { cookie: b.cookie }, payload: { date: "2026-06-01", type: "other" } })).statusCode, 404);
+  const gone = await app.inject({ method: "DELETE", url: `/api/fields/${f.id}/activities/${res.json().activities[0].id}`, headers: { cookie: a.cookie } });
+  assert.equal(gone.json().activities.length, 0);
 });

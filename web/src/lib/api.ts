@@ -19,6 +19,9 @@ export interface User {
   role: string;
   createdAt: string;
 }
+
+/** Stands in for a signed-in user when the server runs without accounts (no MONGO_URI): fields are shared locally. */
+export const LOCAL_USER: User = { id: "local", name: "Local workspace", email: "", organization: "", role: "user", createdAt: "" };
 export interface SoilTest {
   id: string;
   date: string;
@@ -29,6 +32,23 @@ export interface SoilTest {
   k: number | null;
   notes: string;
 }
+export type ActivityType = "sowing" | "fertiliser" | "spraying" | "irrigation" | "tillage" | "scouting" | "harvest" | "other";
+export interface Activity {
+  id: string;
+  date: string;
+  type: ActivityType;
+  crop: string;
+  product: string;
+  quantity: number | null;
+  unit: string;
+  cost: number | null;
+  yieldTPerHa: number | null;
+  notes: string;
+}
+export interface AdminUser extends User {
+  lastLogin: string | null;
+  fields: number;
+}
 export interface SavedField {
   id: string;
   name: string;
@@ -38,6 +58,7 @@ export interface SavedField {
   notes: string;
   summary: Record<string, any> | null;
   tests: SoilTest[];
+  activities: Activity[];
   created: number;
   updated: number;
 }
@@ -125,34 +146,46 @@ export function setToken(token: string | null) {
 
 const JSON_HEADERS = { "content-type": "application/json" };
 
+let unauthorized: (() => void) | null = null;
+/** Called when a signed-in request comes back 401 (session expired or revoked elsewhere). */
+export function onUnauthorized(fn: (() => void) | null) {
+  unauthorized = fn;
+}
+
+function authHeaders(): Record<string, string> {
+  const token = getToken();
+  if (!token) return {};
+  const safeHeaderKey = `x-${AUTH_TOKEN_KEY.replace(/[^a-zA-Z0-9_-]/g, "")}`;
+  return {
+    Authorization: `Bearer ${token}`,
+    "X-Auth-Token": token,
+    ...(safeHeaderKey.length > 2 ? { [safeHeaderKey]: token } : {}),
+  };
+}
+
 async function request<T>(
   path: string,
   init: RequestInit & { json?: unknown } = {},
 ): Promise<T> {
   const { json, ...rest } = init;
-  const token = getToken();
-  const safeHeaderKey = `x-${AUTH_TOKEN_KEY.replace(/[^a-zA-Z0-9_-]/g, "")}`;
-  const authHeaders: Record<string, string> = token
-    ? {
-        Authorization: `Bearer ${token}`,
-        "X-Auth-Token": token,
-        ...(safeHeaderKey.length > 2 ? { [safeHeaderKey]: token } : {}),
-      }
-    : {};
-
   const res = await fetch(path, {
     credentials: "same-origin",
     ...rest,
     headers: {
-      ...authHeaders,
+      ...authHeaders(),
       ...(json !== undefined ? JSON_HEADERS : {}),
       ...rest.headers,
     },
     ...(json !== undefined && { body: JSON.stringify(json) }),
   });
   if (!res.ok) {
-    if (res.status === 401 && path.startsWith("/api/auth/me")) {
-      setToken(null);
+    if (res.status === 401) {
+      if (path.startsWith("/api/auth/me")) setToken(null);
+      // Wrong credentials on sign-in are a form error, not an expired session.
+      else if (!/^\/api\/auth\/(login|signup|password)/.test(path) && !(path === "/api/auth/me" && rest.method === "DELETE")) {
+        setToken(null);
+        unauthorized?.();
+      }
     }
     throw new ApiError(
       res.status,
@@ -165,19 +198,10 @@ async function request<T>(
 
 /** Starts a streamed POST and returns its text reader, or throws the server's error. */
 async function stream(path: string, body: unknown) {
-  const token = getToken();
-  const safeHeaderKey = `x-${AUTH_TOKEN_KEY.replace(/[^a-zA-Z0-9_-]/g, "")}`;
-  const authHeaders: Record<string, string> = token
-    ? {
-        Authorization: `Bearer ${token}`,
-        "X-Auth-Token": token,
-        ...(safeHeaderKey.length > 2 ? { [safeHeaderKey]: token } : {}),
-      }
-    : {};
   const res = await fetch(path, {
     method: "POST",
     credentials: "same-origin",
-    headers: { ...JSON_HEADERS, ...authHeaders },
+    headers: { ...JSON_HEADERS, ...authHeaders() },
     body: JSON.stringify(body),
   });
   if (!res.ok || !res.body)
@@ -275,6 +299,31 @@ export const api = {
     request<SavedField>(`/api/fields/${id}/tests/${testId}`, {
       method: "DELETE",
     }),
+  importFields: (fields: { name: string; lat?: number; lon?: number; polygon?: LonLat[]; notes?: string }[]) =>
+    request<{ created: number; fields: SavedField[] }>("/api/fields/import", {
+      method: "POST",
+      json: { fields },
+    }),
+  addActivity: (id: string, a: Record<string, string>) =>
+    request<SavedField>(`/api/fields/${id}/activities`, {
+      method: "POST",
+      json: a,
+    }),
+  deleteActivity: (id: string, activityId: string) =>
+    request<SavedField>(`/api/fields/${id}/activities/${activityId}`, {
+      method: "DELETE",
+    }),
+
+  adminStats: () => request<Record<string, number>>("/api/admin/stats"),
+  adminUsers: (q = "", page = 0) =>
+    request<{ total: number; page: number; limit: number; users: AdminUser[] }>(
+      `/api/admin/users?${new URLSearchParams({ q, page: String(page) })}`,
+    ),
+  setRole: (id: string, role: "user" | "admin") =>
+    request<{ user: User }>(`/api/admin/users/${id}`, {
+      method: "PATCH",
+      json: { role },
+    }).then((r) => r.user),
 
   me: () => request<{ user: User }>("/api/auth/me").then((r) => r.user),
   login: (email: string, password: string) =>

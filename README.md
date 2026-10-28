@@ -10,6 +10,10 @@
 - land health since 2000 (MODIS) and current field condition from Sentinel-2 (NDVI, NDMI, NDRE)
 - **Agris**, an assistant that answers questions about the field in any language (Claude, with a rule-based fallback)
 - optional accounts with private saved fields, lab tests, shareable links, CSV/JSON/print export, and a batch API for organisations
+- a **field journal** per field (sowing, fertiliser, spraying, irrigation, tillage, scouting, harvest) with quantities, costs and harvested yield, plus season totals
+- a **portfolio** view across saved fields: total area, average pH, fields needing lime or a lab test, re-checks due, this year's spend; search, sort and side-by-side **compare**
+- **import and export** of fields as GeoJSON (points and outlines, for GIS and farm software) or CSV
+- an **Admin** page for operators: users, roles and usage stats
 
 It is inspired by agrishieldai.com and extends it: field outlines, cultivar choice, irrigated scenario, forecast operations, seasonal and 2045 outlooks, Sentinel-2 monitoring, multi-source rainfall cross-checks, US field-scale soil survey, and an organisation batch API.
 
@@ -60,6 +64,8 @@ Everything works with **no keys at all**. Keys only add sources or raise limits.
 | `OPENWEATHER_API_KEY` | Reserved for an extra forecast provider (not wired yet) |
 | `CONTACT_EMAIL` | Contact email in the User-Agent and support (Default: `lalit@sensegrass.com`); required by the Nominatim and ORNL usage policies |
 | `API_KEYS` | Comma-separated keys required on `/api/v1/batch` (open if unset) |
+| `ADMIN_EMAILS` | Comma-separated emails that get the admin role (Admin page) |
+| `HOST` | Bind address (default `::`, IPv4 + IPv6) |
 | `LOG_LEVEL` | Fastify log level |
 
 **Never commit `.env`.** It's in `.gitignore`. In deployment, set these as environment variables on the host.
@@ -76,7 +82,7 @@ fieldsense/
 │       ├── app.ts              buildApp(): plugins, security headers, error mapping, static hosting of web/dist
 │       ├── config.ts           env + integration status
 │       ├── agris.ts            Agris assistant (Claude streaming + rule-based fallback)
-│       ├── routes/             analysis (report, land, satellite, agris), fields, auth, batch
+│       ├── routes/             analysis (report, land, satellite, agris), fields (+ journal, import), auth, batch, admin
 │       ├── stores/fields.ts    FieldStore interface: SQLite (single-user) and MongoDB (per-user) implementations
 │       ├── models/             Mongoose User and Field
 │       ├── lib/                cache.ts (SQLite KV cache + fields DB), validate.ts, auth.ts (JWT sessions), mongoose.ts, http.ts, geo.ts
@@ -86,7 +92,8 @@ fieldsense/
     └── src/
         ├── App.tsx             layout, state, report flow, session, deep links
         ├── lib/api.ts          NDJSON report stream, SSE chat, REST helpers
-        └── components/         MapPanel, Overview, SoilTab, CropsTab, OpsTab, ClimateTab, LandTab, SatelliteTab, FutureTab, Agris, Fields, Account, AuthDialog
+        ├── lib/fieldio.ts      GeoJSON/CSV import and export
+        └── components/         MapPanel, Overview, SoilTab, CropsTab, OpsTab, ClimateTab, LandTab, SatelliteTab, FutureTab, Agris, Fields, FieldJournal, Account, Admin, AuthPage, AuthDialog
 ```
 
 **Report flow** (`server/src/engine/report.ts`): all upstream sources are fetched in parallel. Each is wrapped so that one failing source degrades its section instead of failing the report. The report streams progress lines (NDJSON), then the full JSON. Upstream responses are cached in SQLite (weather 30 days, soil 1 year, reports 6 hours), keyed by rounded coordinates so nearby fields share data.
@@ -143,7 +150,8 @@ Share of each region's dominant crops that land in the top 10 (latest run 17/25)
 
 | Method & path | Body / query | Returns |
 |---|---|---|
-| `GET /api/health` | | always 200 while serving; integration status, Agris mode, SQLite stats (`persistent`), `accounts {enabled, connected}` |
+| `GET /api/health` | | always 200 while serving; `version`, integration status, Agris mode, SQLite stats (`persistent`), `accounts {enabled, connected}` |
+| `GET /api/ready` | | 200 when SQLite and (with accounts) MongoDB are up, else 503 |
 | `GET /api/crops` | | crop parameter library |
 | `GET /api/geocode?q=` | | place search |
 | `POST /api/report` | `{lat, lon}` or `{polygon: [[lon,lat],…]}`, optional `lab {ph, organicCarbon, clay}`, `cropId`, `limeTargetPh`, `limeDepthCm` | NDJSON: `progress` lines, then `{type:"report", reportId, report}` |
@@ -153,6 +161,9 @@ Share of each region's dominant crops that land in the top 10 (latest run 17/25)
 | `POST /api/agris` | `{reportId, question, conversationId?}` | SSE stream: `meta`, `text`, `done`. Report IDs are kept 24 h and survive restarts. |
 | `GET/POST /api/fields`, `GET/PUT/DELETE /api/fields/:id` | `{name, lat, lon, polygon?, notes?, summary?}` | saved fields (signed-in user's own when accounts are on) |
 | `POST /api/fields/:id/tests`, `DELETE /api/fields/:id/tests/:testId` | `{date, ph?, organicCarbon?, clay?, p?, k?, notes?}` | lab tests, newest first |
+| `POST /api/fields/:id/activities`, `DELETE /api/fields/:id/activities/:activityId` | `{date, type, crop?, product?, quantity?, unit?, cost?, yieldTPerHa?, notes?}`; `type` is one of sowing, fertiliser, spraying, irrigation, tillage, scouting, harvest, other | field journal, newest first |
+| `POST /api/fields/import` | `{fields: [{name, lat, lon} or {name, polygon}]}` (max 200, all validated before any is saved) | `{created, fields}` |
+| `GET /api/admin/stats`, `GET /api/admin/users?q=&page=`, `PATCH /api/admin/users/:id` | `{role: "user"\|"admin"}` | admins only (accounts on) |
 | `POST /api/auth/signup`, `/login`, `/logout` | `{name, email, password, organization?}` / `{email, password}` | sets an HttpOnly `fs_session` cookie; API clients may send `Authorization: Bearer <token>` |
 | `GET/PATCH/DELETE /api/auth/me`, `POST /api/auth/password` | | profile, edit, delete account (+ all fields, needs `{password}`), change password (signs out other sessions) |
 | `POST /api/v1/batch` | `{fields: [{id, lat, lon, polygon?}]}` (max 100), header `x-api-key` if `API_KEYS` set | summaries per field |
@@ -161,7 +172,7 @@ Share of each region's dominant crops that land in the top 10 (latest run 17/25)
 
 ## Deploying on Railway (Recommended)
 
-FieldSense is configured for 1-click end-to-end deployment on [Railway](https://railway.com) via `railway.json` and Dockerfile.
+FieldSense is configured for 1-click end-to-end deployment on [Railway](https://railway.com) via `railway.json` and Dockerfile. One service runs the full stack: the Docker build compiles the web app and the API serves it on the same domain, so there is nothing to connect.
 
 1. **Deploy to Railway**: Connect this GitHub repository to a new Railway project.
 2. **Persistent Volume**: add a **Volume** mounted at `/app/data` to keep the SQLite cache (and, without accounts, saved fields) across redeploys. The container takes ownership of the volume at boot, so no extra settings are needed.
