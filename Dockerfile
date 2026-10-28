@@ -1,53 +1,45 @@
-# FieldSense — Single Container: API server + production built web app
-# Optimized multi-stage Docker build for Railway and production environments
+# syntax=docker/dockerfile:1
+# FieldSense: one container serving the API and the built web app (Railway, Fly, any Docker host).
 
-FROM node:22-bookworm-slim AS build
+FROM node:22-bookworm-slim AS base
 WORKDIR /app
-
-# Cache package installation layers
 COPY package.json package-lock.json ./
 COPY server/package.json server/
 COPY web/package.json web/
-RUN npm ci
 
-# Copy all source files and build the React frontend
-COPY . .
+# ---- build the web app ----
+FROM base AS build
+# mongodb-memory-server (a test-only dev dependency) would otherwise download mongod during install
+ENV MONGOMS_DISABLE_POSTINSTALL=1
+RUN npm ci
+COPY web web
 RUN npm run build --workspace web
 
-# Production runner image
+# ---- production dependencies of the server only ----
+FROM base AS deps
+RUN npm ci --omit=dev --workspace server && npm cache clean --force
+
+# ---- runtime ----
 FROM node:22-bookworm-slim AS runner
 WORKDIR /app
-
-# Set default production environment
 ENV NODE_ENV=production \
     PORT=8787 \
     DATA_DIR=/app/data \
-    WEB_DIST=/app/web/dist \
-    CONTACT_EMAIL=lalit@sensegrass.com \
-    NODE_OPTIONS="--experimental-strip-types"
+    WEB_DIST=/app/web/dist
 
-# Copy root package files
-COPY --from=build /app/package.json /app/package-lock.json ./
+COPY --from=deps /app/node_modules ./node_modules
+COPY package.json ./
+COPY server/package.json server/
+COPY server/src server/src
+COPY --from=build /app/web/dist web/dist
+COPY docker-entrypoint.sh /app/docker-entrypoint.sh
+RUN chmod +x /app/docker-entrypoint.sh && mkdir -p /app/data && chown node:node /app/data
 
-# Copy server application and built web assets
-COPY --from=build /app/server ./server
-COPY --from=build /app/web/dist ./web/dist
-COPY --from=build /app/web/package.json ./web/
-
-# Install only production dependencies for the server workspace and prepare data directory
-RUN npm ci --omit=dev --workspace server && \
-    mkdir -p /app/data && \
-    chown -R node:node /app && \
-    chmod 777 /app/data
-
-# Expose server port (Railway overrides PORT dynamically at runtime)
 EXPOSE 8787
+# Used by `docker run`; Railway uses healthcheckPath from railway.json instead.
+HEALTHCHECK --interval=30s --timeout=10s --start-period=20s --retries=3 \
+  CMD node -e "fetch('http://127.0.0.1:'+(process.env.PORT||8787)+'/api/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"
 
-# Switch to non-root user for security
-USER node
-
-# Healthcheck for Docker/Railway container orchestrator
-HEALTHCHECK --interval=30s --timeout=10s --start-period=15s --retries=3 \
-  CMD node -e "fetch('http://127.0.0.1:' + (process.env.PORT || 8787) + '/api/health').then(r => r.ok ? process.exit(0) : process.exit(1)).catch(() => process.exit(1))"
-
-CMD ["node", "--experimental-strip-types", "server/src/index.ts"]
+# Starts as root only to take ownership of the mounted volume, then runs the server as the unprivileged `node` user.
+ENTRYPOINT ["/app/docker-entrypoint.sh"]
+CMD ["node", "--experimental-strip-types", "--disable-warning=ExperimentalWarning", "server/src/index.ts"]

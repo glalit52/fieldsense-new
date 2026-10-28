@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import MapPanel from "./components/MapPanel.tsx";
 import Overview from "./components/Overview.tsx";
 import SoilTab from "./components/SoilTab.tsx";
@@ -10,13 +10,37 @@ import OpsTab from "./components/OpsTab.tsx";
 import FutureTab from "./components/FutureTab.tsx";
 import Agris from "./components/Agris.tsx";
 import Fields from "./components/Fields.tsx";
-import { api, runReport, type CheckInput, type LonLat, type Report } from "./lib/api.ts";
+import Account from "./components/Account.tsx";
+import AuthDialog from "./components/AuthDialog.tsx";
+import AuthPage from "./components/AuthPage.tsx";
+import Modal from "./components/Modal.tsx";
+import { api, runReport, type CheckInput, type LonLat, type Report, type SavedField, type User } from "./lib/api.ts";
 
 const TABS = [
   ["overview", "Overview"], ["soil", "Soil & lime"], ["crops", "Crops"], ["ops", "Next 16 days"], ["climate", "Climate"],
   ["land", "Land health"], ["satellite", "Satellite"], ["future", "2045 outlook"],
 ] as const;
 type Tab = (typeof TABS)[number][0];
+type View = "check" | "fields" | "account";
+
+const DEFAULT_CONTACT = "lalit@sensegrass.com";
+
+/** Headline numbers kept with a saved field for the fields list. */
+const summaryOf = (r: Report) => ({ ...r.summary, headline: r.headline, checkedAt: r.generatedAt });
+
+/** Shareable link state: ?lat=&lon= for a pin, plus p=lon,lat;… for an outline. */
+function readLink(): { lat: number; lon: number; polygon?: LonLat[] } | null {
+  const q = new URLSearchParams(location.search);
+  const lat = Number(q.get("lat")), lon = Number(q.get("lon"));
+  if (!q.has("lat") || !Number.isFinite(lat) || !Number.isFinite(lon)) return null;
+  const polygon = q.get("p")?.split(";").map((pt) => pt.split(",").map(Number) as LonLat).filter((pt) => pt.length === 2 && pt.every(Number.isFinite));
+  return { lat, lon, polygon: polygon && polygon.length >= 3 ? polygon : undefined };
+}
+function writeLink(lat: number, lon: number, polygon?: LonLat[] | null) {
+  const q = new URLSearchParams({ lat: lat.toFixed(5), lon: lon.toFixed(5) });
+  if (polygon && polygon.length <= 80) q.set("p", polygon.map(([x, y]) => `${x.toFixed(5)},${y.toFixed(5)}`).join(";"));
+  history.replaceState(null, "", `?${q}`);
+}
 
 export default function App() {
   const [point, setPoint] = useState<{ lat: number; lon: number } | null>(null);
@@ -30,13 +54,66 @@ export default function App() {
   const [tab, setTab] = useState<Tab>("overview");
   const [land, setLand] = useState<any>(null);
   const [sat, setSat] = useState<any>(null);
-  const [fields, setFields] = useState<any[]>([]);
+  const [fields, setFields] = useState<SavedField[]>([]);
   const [health, setHealth] = useState<any>(null);
-  const [view, setView] = useState<"check" | "fields">("check");
+  const [view, setView] = useState<View>("check");
   const [chatOpen, setChatOpen] = useState(false);
+  /** Track URL pathname for route guards */
+  const [pathname, setPathname] = useState(() => window.location.pathname);
+  /** undefined while the session is being restored. */
+  const [user, setUser] = useState<User | null | undefined>(undefined);
+  const [authFor, setAuthFor] = useState<{ reason?: string; then?: () => void } | null>(null);
+  const [saving, setSaving] = useState(false);
+  /** The saved field the current report belongs to, so re-checking it updates it instead of saving a duplicate. */
+  const [activeFieldId, setActiveFieldId] = useState<string>();
+  const [notice, setNotice] = useState("");
 
-  const refreshFields = useCallback(() => api.fields().then(setFields).catch(() => {}), []);
-  useEffect(() => { api.health().then(setHealth).catch(() => {}); refreshFields(); }, [refreshFields]);
+  const accountsOn = Boolean(health?.accounts?.enabled ?? true);
+  const contact: string = health?.contact ?? DEFAULT_CONTACT;
+  const canUseFields = Boolean(user);
+  const activeField = fields.find((x) => x.id === activeFieldId);
+
+  // Sync browser back/forward buttons
+  useEffect(() => {
+    const handlePopState = () => setPathname(window.location.pathname);
+    window.addEventListener("popstate", handlePopState);
+    return () => window.removeEventListener("popstate", handlePopState);
+  }, []);
+
+  // Restore session on boot
+  useEffect(() => {
+    api.health().then(setHealth).catch(() => {});
+    api.me()
+      .then((u) => {
+        setUser(u);
+        // If logged in, do not give access to login or signup!
+        if (window.location.pathname === "/login" || window.location.pathname === "/signup") {
+          window.history.replaceState(null, "", "/");
+          setPathname("/");
+        }
+      })
+      .catch(() => {
+        setUser(null);
+        // If not logged in, redirect to login page
+        if (window.location.pathname !== "/signup") {
+          window.history.replaceState(null, "", "/login");
+          setPathname("/login");
+        }
+      });
+  }, []);
+
+
+  const refreshFields = useCallback(() => {
+    if (!canUseFields) return void setFields([]);
+    api.fields().then(setFields).catch((e) => setNotice(`Couldn't load saved fields: ${e.message}`));
+  }, [canUseFields]);
+  useEffect(() => { if (user !== undefined) refreshFields(); }, [user, refreshFields]);
+
+  useEffect(() => {
+    if (!notice) return;
+    const t = setTimeout(() => setNotice(""), 4000);
+    return () => clearTimeout(t);
+  }, [notice]);
 
   const check = useCallback(async (override?: Partial<CheckInput>) => {
     const p = override?.lat != null ? { lat: override.lat, lon: override.lon! } : point;
@@ -47,9 +124,9 @@ export default function App() {
     try {
       const { report, reportId } = await runReport({ ...o, lat: p.lat, lon: p.lon, polygon: poly ?? undefined }, (s) => setProgress((x) => [...x, s]));
       setReport(report); setReportId(reportId); setLand(report.land);
+      writeLink(p.lat, p.lon, poly);
       if (report.landPending) {
-        fetch("/api/land", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ lat: p.lat, lon: p.lon, polygon: poly }) })
-          .then((r) => r.json()).then((l) => setLand(l.error ? { error: l.error } : l)).catch((e) => setLand({ error: String(e) }));
+        api.land({ lat: p.lat, lon: p.lon, polygon: poly ?? undefined }).then(setLand).catch((e) => setLand({ error: e.message }));
       }
     } catch (e: any) {
       setError(e.message ?? String(e));
@@ -58,30 +135,81 @@ export default function App() {
     }
   }, [point, polygon, opts]);
 
+  // Open a shared link once on load.
+  const linkOpened = useRef(false);
+  useEffect(() => {
+    if (linkOpened.current) return;
+    linkOpened.current = true;
+    const link = readLink();
+    if (!link) return;
+    setPoint({ lat: link.lat, lon: link.lon }); setPolygon(link.polygon ?? null);
+    check({ lat: link.lat, lon: link.lon, polygon: link.polygon });
+  }, [check]);
+
   useEffect(() => {
     if (tab !== "satellite" || !report || sat) return;
     setSat({ loading: true });
     api.satellite({ lat: report.location.lat, lon: report.location.lon, polygon: report.location.polygon ?? undefined, days: 400 })
-      .then(setSat).catch((e) => setSat({ error: String(e) }));
+      .then(setSat).catch((e) => setSat({ error: e.message }));
   }, [tab, report, sat]);
 
   const rerun = (o: Partial<CheckInput>) => { setOpts((x) => ({ ...x, ...o })); check(o); };
-  const openSaved = (f: any) => {
+  const openSaved = (f: SavedField) => {
     setView("check");
+    setActiveFieldId(f.id);
     setPoint({ lat: f.lat, lon: f.lon }); setPolygon(f.polygon);
-    const t = f.tests?.[0];
-    const lab = t ? { ph: t.ph ?? undefined, organicCarbon: t.organic_carbon ?? undefined, clay: t.clay ?? undefined } : undefined;
+    const t = f.tests[0];
+    const lab = t ? { ph: t.ph ?? undefined, organicCarbon: t.organicCarbon ?? undefined, clay: t.clay ?? undefined } : undefined;
     setOpts(lab ? { lab } : {});
     check({ lat: f.lat, lon: f.lon, polygon: f.polygon ?? undefined, lab });
   };
-  const save = async () => {
-    if (!report) return;
-    const name = prompt("Name this field", report.location.place ? `${report.location.place} field` : "My field");
-    if (!name) return;
-    await api.saveField({ name, lat: report.location.lat, lon: report.location.lon, polygon: report.location.polygon, summary: { ...report.summary, headline: report.headline, checkedAt: report.generatedAt } });
-    refreshFields();
+  /** Gate an action behind sign-in when accounts are on; runs it straight after a successful sign-in. */
+  const withAccount = (reason: string, fn: () => void) => (canUseFields ? fn() : setAuthFor({ reason, then: fn }));
+
+  const updateActive = async () => {
+    if (!report || !activeField) return;
+    try {
+      await api.updateField(activeField.id, { summary: summaryOf(report) });
+      setNotice(`Updated ${activeField.name}`);
+      refreshFields();
+    } catch (e: any) { setNotice(e.message); }
+  };
+  const signedOut = async () => {
+    await api.logout().catch(() => {});
+    setUser(null);
+    setFields([]);
+    setActiveFieldId(undefined);
+    setView("check");
+    window.history.replaceState(null, "", "/login");
+    setPathname("/login");
   };
 
+  // 1. Session check in progress
+  if (user === undefined) {
+    return (
+      <div className="session-loader">
+        <span className="session-loader-diamond">◆</span>
+        <h2>FieldSense</h2>
+        <p className="muted small">Checking secure session…</p>
+      </div>
+    );
+  }
+
+  // 2. Unauthenticated: Redirect/display dedicated Login & Signup
+  if (user === null) {
+    return (
+      <AuthPage
+        initialMode={pathname === "/signup" ? "signup" : "login"}
+        onSuccess={(u) => {
+          setUser(u);
+          window.history.replaceState(null, "", "/");
+          setPathname("/");
+        }}
+      />
+    );
+  }
+
+  // 3. Authenticated: Full access to FieldSense
   return (
     <div className="app">
       <header className="topbar">
@@ -91,20 +219,29 @@ export default function App() {
         </div>
         <nav>
           <button className={view === "check" ? "active" : ""} onClick={() => setView("check")}>Check a field</button>
-          <button className={view === "fields" ? "active" : ""} onClick={() => setView("fields")}>My fields ({fields.length})</button>
+          <button className={view === "fields" ? "active" : ""} onClick={() => setView("fields")}>
+            My fields ({fields.length})
+          </button>
           {report && <button className="agris-btn" onClick={() => setChatOpen((o) => !o)}>💬 Ask Agris</button>}
-          <a href="mailto:lalit@sensegrass.com" className="contact-link" title="Contact Lalit Gautam - SenseGrass">
-            ✉ lalit@sensegrass.com
-          </a>
+          <div className="user-profile-badge" title={user.email}>
+            <span className="user-avatar-dot" />
+            <span>{user.name}</span>
+          </div>
+          <button className={view === "account" ? "active" : ""} onClick={() => setView("account")} title="Account Settings">⚙ Settings</button>
+          <button className="user-signout-btn" onClick={signedOut} title="Sign out of FieldSense">Sign out</button>
+          <a href={`mailto:${contact}`} className="contact-link" title="Contact SenseGrass">✉ {contact}</a>
         </nav>
       </header>
 
       <main className={`layout ${view}`}>
         <section className="left">
-          <MapPanel point={point} polygon={polygon} onPoint={(lat, lon) => setPoint({ lat, lon })} onPolygon={(r) => {
-            setPolygon(r);
-            if (r) setPoint({ lat: r.reduce((a, p) => a + p[1], 0) / r.length, lon: r.reduce((a, p) => a + p[0], 0) / r.length });
-          }}
+          <MapPanel point={point} polygon={polygon}
+
+            onPoint={(lat, lon) => { setPoint({ lat, lon }); setActiveFieldId(undefined); }}
+            onPolygon={(r) => {
+              setPolygon(r); setActiveFieldId(undefined);
+              if (r) setPoint({ lat: r.reduce((a, p) => a + p[1], 0) / r.length, lon: r.reduce((a, p) => a + p[0], 0) / r.length });
+            }}
             ndviTiles={sat?.tiles} saved={fields} onOpenSaved={openSaved} />
           <div className="check-bar">
             <div className="coords">
@@ -115,8 +252,10 @@ export default function App() {
         </section>
 
         <section className="right">
-          {view === "fields" ? (
-            <Fields fields={fields} onOpen={openSaved} onChange={refreshFields} />
+          {view === "account" && user ? (
+            <Account user={user} onUser={setUser} onSignedOut={signedOut} />
+          ) : view === "fields" && canUseFields ? (
+            <Fields fields={fields} activeId={activeFieldId} onOpen={openSaved} onChange={refreshFields} />
           ) : busy ? (
             <div className="progress card">
               <h2>Reading your field…</h2>
@@ -129,12 +268,16 @@ export default function App() {
             <>
               <div className="report-head">
                 <div>
-                  <div className="place">{[report.location.place, report.location.region, report.location.country].filter(Boolean).join(", ") || "Your field"}
+                  <div className="place">{activeField ? <b>{activeField.name} · </b> : null}
+                    {[report.location.place, report.location.region, report.location.country].filter(Boolean).join(", ") || "Your field"}
                     {report.location.areaHa ? ` · ${report.location.areaHa.toFixed(1)} ha` : ""} · {report.location.elevation?.toFixed(0)} m</div>
                   <h1>{report.headline}</h1>
                 </div>
                 <div className="head-actions">
-                  <button onClick={save}>☆ Save field</button>
+                  {activeField
+                    ? <button onClick={updateActive} title="Store this check's numbers with the saved field">↻ Update saved field</button>
+                    : <button onClick={() => withAccount("Sign in to save fields and keep their lab tests.", () => setSaving(true))}>☆ Save field</button>}
+                  <button onClick={() => navigator.clipboard.writeText(location.href).then(() => setNotice("Link copied"), () => setNotice("Couldn't copy the link"))}>🔗 Copy link</button>
                   <button onClick={() => window.print()}>⎙ Print / PDF</button>
                   <button onClick={() => download(report)}>⤓ JSON</button>
                 </div>
@@ -154,12 +297,46 @@ export default function App() {
               </div>
             </>
           ) : (
-            <Welcome health={health} onExample={(lat, lon) => { setPoint({ lat, lon }); setPolygon(null); check({ lat, lon, polygon: undefined }); }} />
+            <Welcome health={health} contact={contact} onExample={(lat, lon) => { setPoint({ lat, lon }); setPolygon(null); setActiveFieldId(undefined); check({ lat, lon, polygon: undefined }); }} />
           )}
         </section>
       </main>
-      {report && chatOpen && <Agris reportId={reportId} r={report} onClose={() => setChatOpen(false)} mode={health?.agris} />}
+      {report && chatOpen && <Agris reportId={reportId} r={report} onClose={() => setChatOpen(false)} mode={health?.agris} contact={contact} />}
+      {authFor && (
+        <AuthDialog reason={authFor.reason} onClose={() => setAuthFor(null)}
+          onDone={(u) => { setUser(u); const then = authFor.then; setAuthFor(null); then?.(); }} />
+      )}
+      {saving && report && (
+        <SaveDialog report={report} onClose={() => setSaving(false)} onSaved={(f) => {
+          setSaving(false); setActiveFieldId(f.id); setNotice(`Saved ${f.name}`); refreshFields();
+        }} />
+      )}
+      {notice && <div className="toast" role="status">{notice}</div>}
     </div>
+  );
+}
+
+function SaveDialog({ report, onClose, onSaved }: { report: Report; onClose: () => void; onSaved: (f: SavedField) => void }) {
+  const [name, setName] = useState(report.location.place ? `${report.location.place} field` : "My field");
+  const [notes, setNotes] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState("");
+  return (
+    <Modal title="Save this field" onClose={onClose}>
+      <form className="stack" onSubmit={async (e) => {
+        e.preventDefault();
+        setBusy(true); setError("");
+        try {
+          const { lat, lon, polygon } = report.location;
+          onSaved(await api.saveField({ name, notes, lat, lon, polygon, summary: summaryOf(report) }));
+        } catch (err: any) { setError(err.message); setBusy(false); }
+      }}>
+        <label>Name <input required autoFocus maxLength={120} value={name} onChange={(e) => setName(e.target.value)} /></label>
+        <label>Notes <span className="muted small">(optional)</span><textarea rows={3} maxLength={4000} value={notes} onChange={(e) => setNotes(e.target.value)} /></label>
+        {error && <p className="form-error" role="alert">{error}</p>}
+        <button className="primary big" disabled={busy}>{busy ? "Saving…" : "Save field"}</button>
+      </form>
+    </Modal>
   );
 }
 
@@ -168,6 +345,7 @@ function download(r: Report) {
   a.href = URL.createObjectURL(new Blob([JSON.stringify(r, null, 2)], { type: "application/json" }));
   a.download = `fieldsense-${r.location.lat.toFixed(4)}_${r.location.lon.toFixed(4)}.json`;
   a.click();
+  URL.revokeObjectURL(a.href);
 }
 
 const EXAMPLES: [string, number, number][] = [
@@ -175,7 +353,7 @@ const EXAMPLES: [string, number, number][] = [
   ["Iowa corn belt, USA", 42.0, -93.75], ["Beauce, France", 48.3, 1.6], ["Rift Valley maize, Kenya", 0.52, 35.27], ["Mato Grosso soy, Brazil", -13.0, -55.9],
 ];
 
-function Welcome({ health, onExample }: { health: any; onExample: (lat: number, lon: number) => void }) {
+function Welcome({ health, contact, onExample }: { health: any; contact: string; onExample: (lat: number, lon: number) => void }) {
   const i = health?.integrations ?? {};
   const row = (k: string, label: string) => <li key={k} className={i[k] ? "on" : "off"}>{i[k] ? "●" : "○"} {label}</li>;
   return (
@@ -194,6 +372,7 @@ function Welcome({ health, onExample }: { health: any; onExample: (lat: number, 
         {row("sentinelHub", "Copernicus Data Space / Sentinel Hub")}
         {row("earthEngine", "Google Earth Engine (CHIRPS, WorldCover, JRC water, MERIT, S2, MODIS)")}
         {row("claude", "Agris assistant on Claude")}
+        {row("accounts", "Accounts with private saved fields")}
       </ul>
       <p className="muted small">Grey items are optional. Add keys in <code>.env</code> to switch them on.</p>
 
@@ -202,9 +381,7 @@ function Welcome({ health, onExample }: { health: any; onExample: (lat: number, 
           <b>SenseGrass Precision Agriculture</b>
           <p className="muted small">Enterprise deployments, soil sensor calibration, custom API access & agronomy support:</p>
         </div>
-        <a href="mailto:lalit@sensegrass.com" className="contact-pill">
-          ✉ lalit@sensegrass.com
-        </a>
+        <a href={`mailto:${contact}`} className="contact-pill">✉ {contact}</a>
       </div>
     </div>
   );

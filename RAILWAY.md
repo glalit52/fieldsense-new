@@ -1,133 +1,85 @@
-# FieldSense — Railway Deployment Guide (End-to-End)
+# Deploying FieldSense on Railway
 
-FieldSense is fully pre-configured for seamless, zero-friction deployment on [Railway](https://railway.com).
+FieldSense ships as one Docker container: the Fastify API also serves the built React app. `railway.json` tells Railway to build the `Dockerfile` and health-check `/api/health`.
 
----
+## 1. Create the service
 
-## 1. Quick Deploy Steps
+**Dashboard:** New Project → Deploy from GitHub repo → pick this repository. Railway detects `railway.json` and builds the Dockerfile.
 
-### Option A: Via Railway Web Dashboard
-1. Log in to [Railway](https://railway.com).
-2. Click **New Project** → **Deploy from GitHub repo**.
-3. Select this repository: `glalit52/fieldsense-new` (or your fork/team repo).
-4. Railway will automatically detect `railway.json` and build using the optimized multi-stage `Dockerfile`.
+**CLI:**
 
-### Option B: Via Railway CLI
 ```bash
 npm i -g @railway/cli
 railway login
-railway init
+railway init        # or: railway link, for an existing project
 railway up
 ```
 
----
+Then **Settings → Networking → Generate Domain** for a `*.up.railway.app` URL, or add a custom domain (Railway issues the TLS certificate).
 
-## 2. Persistent Storage (Volume Mount)
+## 2. Add a volume (required)
 
-FieldSense uses SQLite (`fieldsense.db`) for caching 35 years of weather/soil records and storing user-created fields.
+SQLite at `/app/data` holds the upstream data cache (35 years of weather per area, soil, satellite) and Agris report IDs; without accounts it also holds saved fields. Without a volume all of that resets on every deploy.
 
-To persist this data across service redeployments and restarts:
+Service → **Volumes → Add Volume**, mount path **`/app/data`**.
 
-1. In your Railway project view, click on the **FieldSense** service.
-2. Go to the **Volumes** tab.
-3. Click **Add Volume**.
-4. Set the **Mount Path** to:
-   ```
-   /app/data
-   ```
-5. Click **Add**. Railway will mount persistent SSD storage at `/app/data`.
+Railway mounts volumes owned by root. The container's entrypoint (`docker-entrypoint.sh`) takes ownership of the volume and then runs the server as the unprivileged `node` user, so no `RAILWAY_RUN_UID` setting is needed. `GET /api/health` reports `database.persistent: true` when the database is on the volume; if it says `false`, the volume is missing or not writable and the logs say so at boot.
 
-> **Automatic Self-Healing**: The `/app/data` directory and `fieldsense.db` database are **automatically created on boot** if not already present. Even if deployed initially without a volume, FieldSense automatically initializes the folder, sets up write validation, runs WAL-mode SQLite schemas, and exposes database stats at `/api/health`.
+Keep **one replica**: SQLite on a volume can't be shared between instances.
 
----
+## 3. Variables
 
-## 3. Environment Variables Configuration
+Set these under the service's **Variables** tab. `PORT` is injected by Railway; `NODE_ENV`, `DATA_DIR` and `WEB_DIST` are set in the Dockerfile.
 
-In Railway's **Variables** tab for the service, configure the following:
+### Accounts (recommended for any public URL)
 
-### Core Configuration
-| Variable | Value / Recommendation | Note |
-|---|---|---|
-| `CONTACT_EMAIL` | `lalit@sensegrass.com` | **Default is pre-configured**. Sent in User-Agent header for Nominatim / ORNL upstream APIs and displayed in support links. |
-| `DATA_DIR` | `/app/data` | Default in Dockerfile. Points to the mounted Railway Volume. |
-| `PORT` | *(Managed by Railway)* | Automatically injected by Railway. FieldSense binds to `0.0.0.0:${PORT}`. |
-| `NODE_ENV` | `production` | Set automatically in Dockerfile. |
+Without `MONGO_URI`, saved fields are shared by everyone who can open the site. With it, people sign up and each sees only their own fields.
 
-### Optional API Enhancements
-| Variable | When to Set | Details |
-|---|---|---|
-| `ANTHROPIC_API_KEY` | Recommended | Unlocks Claude 3.5/Opus streaming AI assistant for **Agris**. Without this, Agris runs on the built-in deterministic rule engine. |
-| `AGRIS_MODEL` | Optional | E.g. `claude-3-5-sonnet-20241022` or `claude-opus-5-5`. |
-| `OPEN_METEO_API_KEY` | Recommended for Production | Removes public rate limits (~600 calls/min, 10k/day) for ERA5 weather archives and forecasts. |
-| `CDSE_CLIENT_ID` & `CDSE_CLIENT_SECRET` | Optional | Unlocks Sentinel-2 NDVI/NDMI field-level statistics via Copernicus Data Space (Sentinel Hub). |
-| `GEE_SERVICE_ACCOUNT_KEY_FILE` & `GEE_PROJECT` | Optional | Google Earth Engine service account credentials for CHIRPS bias correction and WorldCover maps. |
-| `API_KEYS` | Optional | Comma-separated API keys required on `/api/v1/batch` (open if unset). |
-| `LOG_LEVEL` | Optional | Fastify log level (`info`, `warn`, `error`, `debug`). |
+| Variable | Value |
+|---|---|
+| `MONGO_URI` | MongoDB connection string, e.g. MongoDB Atlas `mongodb+srv://USER:PASSWORD@cluster.example.mongodb.net/fieldsense`. Railway's MongoDB plugin works too: reference its `MONGO_URL` as `${{MongoDB.MONGO_URL}}`. |
+| `JWT_SECRET` | **Required with `MONGO_URI`.** At least 32 random characters: `openssl rand -hex 32`. The server refuses to start in production without it. Changing it signs everyone out. |
+| `JWT_EXPIRES_IN` | Session length, default `7d`. |
 
----
+**MongoDB Atlas network access:** Railway does not have fixed outbound IPs on most plans, so in Atlas → Network Access allow `0.0.0.0/0` (access is still protected by the database user's password), or use Railway's static outbound IPs if your plan has them. If the database is unreachable, the app keeps serving field checks; sign-in returns 503 and the server retries the connection with backoff. `GET /api/health` shows `accounts.connected`.
 
-## 4. Healthcheck & Orchestration
+### Data sources and assistant (optional)
 
-The project includes `railway.json` which declares:
+| Variable | When to set |
+|---|---|
+| `OPEN_METEO_API_KEY` | Recommended in production. The free tier (~600 calls/min, 10k/day) runs out quickly because each new area pulls a 35-year archive. |
+| `ANTHROPIC_API_KEY` | Runs Agris on Claude. Without it, Agris answers with built-in rules. |
+| `AGRIS_MODEL` | Claude model for Agris, default `claude-opus-5-5`. |
+| `CDSE_CLIENT_ID`, `CDSE_CLIENT_SECRET` | Copernicus Data Space (Sentinel Hub) field statistics and NDVI images. |
+| `GEE_SERVICE_ACCOUNT_KEY`, `GEE_PROJECT` | Google Earth Engine. Paste the whole service-account JSON into `GEE_SERVICE_ACCOUNT_KEY` (Railway has no convenient way to mount a key file). |
+| `CONTACT_EMAIL` | Shown in the app and sent in the User-Agent to Nominatim and ORNL, which require a contact. Default `lalit@sensegrass.com`. |
+| `API_KEYS` | Comma-separated keys for `POST /api/v1/batch` (`x-api-key` header). Leave empty only if the batch API should be open. |
+| `CORS_ORIGINS` | Other websites allowed to call the API from a browser. Not needed for the bundled web app. |
+| `LOG_LEVEL` | `info` (default), `warn`, `debug`. |
 
-```json
-{
-  "$schema": "https://railway.com/railway.schema.json",
-  "build": {
-    "builder": "DOCKERFILE",
-    "dockerfilePath": "Dockerfile"
-  },
-  "deploy": {
-    "numReplicas": 1,
-    "sleepApplication": false,
-    "restartPolicyType": "ON_FAILURE",
-    "restartPolicyMaxRetries": 10,
-    "healthcheckPath": "/api/health",
-    "healthcheckTimeout": 60
-  }
-}
+## 4. What the deployment does
+
+- **Build:** multi-stage Dockerfile. The web app is built in one stage, the server's production dependencies are installed in another, and the final image holds only `server/src`, production `node_modules` and `web/dist`.
+- **Health check:** `/api/health` returns 200 as long as the process serves requests. A MongoDB or upstream-API outage shows in the response body rather than failing the deploy.
+- **Shutdown:** on `SIGTERM` the server stops accepting connections, closes MongoDB and SQLite, and exits; `drainingSeconds: 15` gives it time. It force-exits after 10 s if something hangs.
+- **Behind Railway's proxy:** `trustProxy` is on, so rate limits key on the real client IP. Session cookies are `HttpOnly`, `SameSite=Lax` and `Secure`. HSTS is sent in production.
+- **Caching:** fingerprinted assets are served `immutable` for a year and `index.html` is `no-cache`, so a deploy is picked up on the next page load. JSON responses and the streamed report are gzipped.
+- **Limits:** 120 requests/min per IP overall; 10/min on sign-in, sign-up and password endpoints; 30/min on Agris; 10/min on the batch API.
+
+## 5. Check the deployment
+
+- [ ] `https://<app>.up.railway.app/api/health` → `"status": "healthy"`, `database.persistent: true`, and with accounts `accounts.connected: true`.
+- [ ] Open the site, drop a pin, press **Check this field**.
+- [ ] With accounts: create an account, save the field, redeploy, sign in again: the field is still there.
+- [ ] Without accounts: save a field, redeploy: it is still there (confirms the volume).
+
+## Running the same image locally
+
+```bash
+docker build -t fieldsense .
+docker run -p 8787:8787 --env-file .env -v fieldsense-data:/app/data fieldsense
 ```
 
-- **Healthcheck Path:** `/api/health` returns HTTP 200 with uptime, system status, integrations, and contact email.
-- **Graceful Shutdown:** The server listens for `SIGTERM` and `SIGINT` signals, safely terminates open HTTP connections, and closes the SQLite database connection before shutdown.
-- **Reverse Proxy Support:** Fastify is configured with `trustProxy: true` to properly detect client IPs behind Railway's Edge routers and rate limit appropriately.
+## Support
 
----
-
-## 5. Custom Domain & Networking
-
-1. In Railway, navigate to **Settings** → **Networking**.
-2. Click **Generate Domain** (gives you a `*.up.railway.app` URL).
-3. To attach a custom domain (e.g. `fieldsense.sensegrass.com`):
-   - Click **Custom Domain**.
-   - Enter your domain name and follow the DNS CNAME instructions.
-   - Railway will automatically provision a free Let's Encrypt SSL/TLS certificate.
-
----
-
-## 6. Verification Checklist
-
-After deploying to Railway:
-
-- [ ] Check `https://<your-app>.up.railway.app/api/health` returns:
-  ```json
-  {
-    "ok": true,
-    "status": "healthy",
-    "service": "FieldSense",
-    "contact": "lalit@sensegrass.com",
-    "integrations": { ... }
-  }
-  ```
-- [ ] Open `https://<your-app>.up.railway.app` in your browser.
-- [ ] Drop a pin on the map and run "Check this field".
-- [ ] Verify that saving a field persists after restarting or redeploying the Railway service (confirms Volume `/app/data` is active).
-
----
-
-## 7. Support & Enterprise Assistance
-
-For assistance with enterprise setup, custom agro-satellite feeds, or dedicated models:
-- **Lalit Gautam**
-- **Email:** [lalit@sensegrass.com](mailto:lalit@sensegrass.com)
-- **Organization:** SenseGrass Inc.
+Lalit Gautam · [lalit@sensegrass.com](mailto:lalit@sensegrass.com) · SenseGrass Inc.

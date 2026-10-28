@@ -9,7 +9,7 @@ const SUGGESTED = [
 
 interface Msg { role: "user" | "agris"; text: string }
 
-export default function Agris({ reportId, r, onClose, mode }: { reportId: string; r: Report; onClose: () => void; mode?: string }) {
+export default function Agris({ reportId, r, onClose, mode, contact }: { reportId: string; r: Report; onClose: () => void; mode?: string; contact: string }) {
   const [msgs, setMsgs] = useState<Msg[]>([]);
   const [q, setQ] = useState("");
   const [busy, setBusy] = useState(false);
@@ -53,7 +53,7 @@ export default function Agris({ reportId, r, onClose, mode }: { reportId: string
         <button className="primary" disabled={busy || !q.trim()}>Send</button>
       </form>
       <div className="agris-help-footer">
-        SenseGrass Agronomy · Inquiries: <a href="mailto:lalit@sensegrass.com">lalit@sensegrass.com</a>
+        SenseGrass Agronomy · Inquiries: <a href={`mailto:${contact}`}>{contact}</a>
       </div>
     </aside>
   );

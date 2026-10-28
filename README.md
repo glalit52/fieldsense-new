@@ -9,7 +9,7 @@
 - an ECMWF seasonal outlook and a 2045 outlook (CMIP6) that re-scores the top crops under future climate
 - land health since 2000 (MODIS) and current field condition from Sentinel-2 (NDVI, NDMI, NDRE)
 - **Agris**, an assistant that answers questions about the field in any language (Claude, with a rule-based fallback)
-- saved fields with lab tests, CSV/JSON/print export, and a batch API for organisations
+- optional accounts with private saved fields, lab tests, shareable links, CSV/JSON/print export, and a batch API for organisations
 
 It is inspired by agrishieldai.com and extends it: field outlines, cultivar choice, irrigated scenario, forecast operations, seasonal and 2045 outlooks, Sentinel-2 monitoring, multi-source rainfall cross-checks, US field-scale soil survey, and an organisation batch API.
 
@@ -37,7 +37,7 @@ Other scripts:
 
 | Command | What it does |
 |---|---|
-| `npm test` | Engine unit tests (`server/test/engine.test.ts`) |
+| `npm test` | Engine unit tests, HTTP route tests, and account tests against a throwaway MongoDB (downloads `mongod` 7.0 on first run) |
 | `npm run typecheck` | TypeScript checks for server and web |
 | `npm run bench` | Calibration benchmark: do six known farming regions rank their real crops in the top 10? |
 | `node server/test/smoke-api.ts` | End-to-end API smoke test against a running server |
@@ -51,8 +51,10 @@ Everything works with **no keys at all**. Keys only add sources or raise limits.
 | Variable | Purpose |
 |---|---|
 | `PORT`, `DATA_DIR` | Server port (8787) and where the SQLite database lives (`./data`) |
+| `MONGO_URI`, `JWT_SECRET`, `JWT_EXPIRES_IN` | Turns on accounts: sign-up/sign-in and private per-user saved fields in MongoDB. `JWT_SECRET` (32+ random chars) is required in production when `MONGO_URI` is set. Without `MONGO_URI`, saved fields live in SQLite and are shared by everyone using the server. |
+| `CORS_ORIGINS` | Comma-separated browser origins allowed to call the API cross-site (default: same-origin only) |
 | `ANTHROPIC_API_KEY`, `AGRIS_MODEL` | Runs Agris on Claude (default `claude-opus-5-5`). Without a key Agris uses built-in rules. |
-| `GEE_SERVICE_ACCOUNT_KEY_FILE`, `GEE_PROJECT` | Google Earth Engine service account: field-mean MODIS and Sentinel-2, CHIRPS rainfall bias correction, ESA WorldCover, JRC surface water, MERIT Hydro terrain wetness, SoilGrids fallback, NDVI map tiles |
+| `GEE_SERVICE_ACCOUNT_KEY_FILE` or `GEE_SERVICE_ACCOUNT_KEY` (inline JSON), `GEE_PROJECT` | Google Earth Engine service account: field-mean MODIS and Sentinel-2, CHIRPS rainfall bias correction, ESA WorldCover, JRC surface water, MERIT Hydro terrain wetness, SoilGrids fallback, NDVI map tiles |
 | `CDSE_CLIENT_ID`, `CDSE_CLIENT_SECRET` | Copernicus Data Space (Sentinel Hub) OAuth client: Statistical API field time series and NDVI images |
 | `OPEN_METEO_API_KEY` | Commercial Open-Meteo key. The free tier allows about 600 calls/min and 10k/day, and the 35-year archive request is heavy, so use a key in production. |
 | `OPENWEATHER_API_KEY` | Reserved for an extra forecast provider (not wired yet) |
@@ -70,17 +72,21 @@ Everything works with **no keys at all**. Keys only add sources or raise limits.
 fieldsense/
 ├── server/                     Node + Fastify API (TypeScript, run directly by Node)
 │   └── src/
-│       ├── index.ts            routes, validation, static hosting of web/dist
+│       ├── index.ts            process bootstrap: config check, listen, MongoDB connect, graceful shutdown
+│       ├── app.ts              buildApp(): plugins, security headers, error mapping, static hosting of web/dist
 │       ├── config.ts           env + integration status
 │       ├── agris.ts            Agris assistant (Claude streaming + rule-based fallback)
-│       ├── lib/                cache.ts (SQLite KV cache + fields DB), http.ts (retries/backoff), geo.ts (UTM, area, PIP)
+│       ├── routes/             analysis (report, land, satellite, agris), fields, auth, batch
+│       ├── stores/fields.ts    FieldStore interface: SQLite (single-user) and MongoDB (per-user) implementations
+│       ├── models/             Mongoose User and Field
+│       ├── lib/                cache.ts (SQLite KV cache + fields DB), validate.ts, auth.ts (JWT sessions), mongoose.ts, http.ts, geo.ts
 │       ├── providers/          one file per external data source
 │       └── engine/             the agronomy models (pure functions, unit-tested)
 └── web/                        React 19 + Vite + Leaflet + Recharts
     └── src/
-        ├── App.tsx             layout, state, report flow
+        ├── App.tsx             layout, state, report flow, session, deep links
         ├── lib/api.ts          NDJSON report stream, SSE chat, REST helpers
-        └── components/         MapPanel, Overview, SoilTab, CropsTab, OpsTab, ClimateTab, LandTab, SatelliteTab, FutureTab, Agris, Fields
+        └── components/         MapPanel, Overview, SoilTab, CropsTab, OpsTab, ClimateTab, LandTab, SatelliteTab, FutureTab, Agris, Fields, Account, AuthDialog
 ```
 
 **Report flow** (`server/src/engine/report.ts`): all upstream sources are fetched in parallel. Each is wrapped so that one failing source degrades its section instead of failing the report. The report streams progress lines (NDJSON), then the full JSON. Upstream responses are cached in SQLite (weather 30 days, soil 1 year, reports 6 hours), keyed by rounded coordinates so nearby fields share data.
@@ -137,15 +143,18 @@ Share of each region's dominant crops that land in the top 10 (latest run 17/25)
 
 | Method & path | Body / query | Returns |
 |---|---|---|
-| `GET /api/health` | | integration status, Agris mode |
+| `GET /api/health` | | always 200 while serving; integration status, Agris mode, SQLite stats (`persistent`), `accounts {enabled, connected}` |
 | `GET /api/crops` | | crop parameter library |
 | `GET /api/geocode?q=` | | place search |
 | `POST /api/report` | `{lat, lon}` or `{polygon: [[lon,lat],…]}`, optional `lab {ph, organicCarbon, clay}`, `cropId`, `limeTargetPh`, `limeDepthCm` | NDJSON: `progress` lines, then `{type:"report", reportId, report}` |
 | `POST /api/land` | `{lat, lon}` or `{polygon}` | land-health analysis (used when the report says `landPending`) |
 | `POST /api/satellite` | `{lat, lon}` or `{polygon}`, `days` | Sentinel-2 index series, recent scenes, optional tile URL |
 | `POST /api/satellite/ndvi.png` | `{polygon}` | NDVI image (Sentinel Hub key required) |
-| `POST /api/agris` | `{reportId, question, conversationId?}` | SSE stream: `meta`, `text`, `done` |
-| `GET/POST /api/fields`, `PUT/DELETE /api/fields/:id`, `POST /api/fields/:id/tests` | | saved fields and lab tests |
+| `POST /api/agris` | `{reportId, question, conversationId?}` | SSE stream: `meta`, `text`, `done`. Report IDs are kept 24 h and survive restarts. |
+| `GET/POST /api/fields`, `GET/PUT/DELETE /api/fields/:id` | `{name, lat, lon, polygon?, notes?, summary?}` | saved fields (signed-in user's own when accounts are on) |
+| `POST /api/fields/:id/tests`, `DELETE /api/fields/:id/tests/:testId` | `{date, ph?, organicCarbon?, clay?, p?, k?, notes?}` | lab tests, newest first |
+| `POST /api/auth/signup`, `/login`, `/logout` | `{name, email, password, organization?}` / `{email, password}` | sets an HttpOnly `fs_session` cookie; API clients may send `Authorization: Bearer <token>` |
+| `GET/PATCH/DELETE /api/auth/me`, `POST /api/auth/password` | | profile, edit, delete account (+ all fields, needs `{password}`), change password (signs out other sessions) |
 | `POST /api/v1/batch` | `{fields: [{id, lat, lon, polygon?}]}` (max 100), header `x-api-key` if `API_KEYS` set | summaries per field |
 
 ---
@@ -155,15 +164,16 @@ Share of each region's dominant crops that land in the top 10 (latest run 17/25)
 FieldSense is configured for 1-click end-to-end deployment on [Railway](https://railway.com) via `railway.json` and Dockerfile.
 
 1. **Deploy to Railway**: Connect this GitHub repository to a new Railway project.
-2. **Persistent Volume**: In Railway project settings, add a **Volume** mounted at `/app/data` to preserve the SQLite cache and saved fields across redeployments.
+2. **Persistent Volume**: add a **Volume** mounted at `/app/data` to keep the SQLite cache (and, without accounts, saved fields) across redeploys. The container takes ownership of the volume at boot, so no extra settings are needed.
 3. **Environment Variables**:
    - `PORT`: Automatically set by Railway.
    - `CONTACT_EMAIL`: Defaults to `lalit@sensegrass.com` (can be overridden).
    - `OPEN_METEO_API_KEY`: Recommended for production workloads.
    - `ANTHROPIC_API_KEY`: Optional; unlocks Claude-powered agronomic assistant.
+   - `MONGO_URI` + `JWT_SECRET`: Optional; turn on accounts with private saved fields. Strongly recommended for any public deployment.
 4. **Health Check**: Configured to `/api/health` with automatic restart policy on failure.
 
-See [`RAILWAY.md`](file:///Users/saurabhdixit/sensegrass/lalit-Gautam/fieldsense/RAILWAY.md) for the comprehensive end-to-end Railway deployment guide.
+See [`RAILWAY.md`](RAILWAY.md) for the comprehensive end-to-end Railway deployment guide.
 
 ### Docker Local Run
 

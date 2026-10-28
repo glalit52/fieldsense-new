@@ -1,0 +1,75 @@
+import { CROPS } from "../engine/crops.ts";
+import type { ReportInput } from "../engine/report.ts";
+import { centroid, type Ring } from "./geo.ts";
+
+/** An error with an HTTP status; the app error handler sends `message` to the client. */
+export class HttpError extends Error {
+  readonly statusCode: number;
+  constructor(statusCode: number, message: string) {
+    super(message);
+    this.statusCode = statusCode;
+  }
+}
+export const badRequest = (msg: string) => new HttpError(400, msg);
+export const notFound = (msg = "Not found") => new HttpError(404, msg);
+
+export function num(v: unknown, name: string, min: number, max: number): number {
+  const n = typeof v === "string" && v.trim() === "" ? NaN : Number(v);
+  if (!Number.isFinite(n) || n < min || n > max) throw badRequest(`${name} must be a number between ${min} and ${max}`);
+  return n;
+}
+
+/** Optional number: null, undefined and "" mean "not given". */
+export function optNum(v: unknown, name: string, min: number, max: number): number | undefined {
+  return v == null || v === "" ? undefined : num(v, name, min, max);
+}
+
+export function str(v: unknown, max: number, fallback = ""): string {
+  return v == null ? fallback : String(v).trim().slice(0, max);
+}
+
+export function parseRing(p: unknown): Ring | undefined {
+  if (p == null) return undefined;
+  if (!Array.isArray(p) || p.length < 3 || p.length > 500) throw badRequest("polygon must be 3–500 [lon, lat] pairs");
+  return p.map((pt: any) => [num(pt?.[0], "polygon lon", -180, 180), num(pt?.[1], "polygon lat", -90, 90)] as [number, number]);
+}
+
+/** A point or outline: the outline's centroid wins over lat/lon when both are given. */
+export function parseLocation(b: any): { lat: number; lon: number; polygon?: Ring } {
+  const polygon = parseRing(b?.polygon);
+  const [lon, lat] = polygon ? centroid(polygon) : [b?.lon, b?.lat];
+  return { lat: num(lat, "lat", -60, 75), lon: num(lon, "lon", -180, 180), polygon };
+}
+
+export function parseInput(b: any): ReportInput {
+  const lab = b?.lab ? {
+    ph: optNum(b.lab.ph, "lab pH", 3, 10.5),
+    organicCarbon: optNum(b.lab.organicCarbon, "organic carbon %", 0, 30),
+    clay: optNum(b.lab.clay, "clay %", 0, 100),
+  } : undefined;
+  return {
+    ...parseLocation(b),
+    lab: lab && Object.values(lab).some((v) => v != null) ? lab : undefined,
+    cropId: typeof b?.cropId === "string" && CROPS.some((c) => c.id === b.cropId) ? b.cropId : undefined,
+    limeTargetPh: optNum(b?.limeTargetPh, "limeTargetPh", 5, 7.5),
+    limeDepthCm: optNum(b?.limeDepthCm, "limeDepthCm", 5, 40),
+  };
+}
+
+export interface SoilTestInput { date: string; ph?: number; organicCarbon?: number; clay?: number; p?: number; k?: number; notes: string }
+
+export function parseSoilTest(b: any): SoilTestInput {
+  const date = str(b?.date, 10) || new Date().toISOString().slice(0, 10);
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) throw badRequest("date must be YYYY-MM-DD");
+  const t = {
+    date,
+    ph: optNum(b?.ph, "pH", 3, 10.5),
+    organicCarbon: optNum(b?.organicCarbon, "organic carbon %", 0, 30),
+    clay: optNum(b?.clay, "clay %", 0, 100),
+    p: optNum(b?.p, "P", 0, 1000),
+    k: optNum(b?.k, "K", 0, 5000),
+    notes: str(b?.notes, 1000),
+  };
+  if ([t.ph, t.organicCarbon, t.clay, t.p, t.k].every((v) => v == null)) throw badRequest("Enter at least one lab value");
+  return t;
+}

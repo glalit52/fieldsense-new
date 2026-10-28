@@ -34,6 +34,9 @@ function resolveWritableDataDir(preferredDir: string): string {
 }
 
 export const dataDirectory = resolveWritableDataDir(config.dataDir);
+/** False when the preferred directory (the Railway volume) was not writable and data will not survive a redeploy. */
+export const dataPersistent = dataDirectory === config.dataDir;
+if (!dataPersistent) console.warn(`[FieldSense] DATA_DIR "${config.dataDir}" is not writable; using "${dataDirectory}", which will NOT persist across deploys.`);
 export const dbFilePath = path.join(dataDirectory, "fieldsense.db");
 
 // Initialize SQLite database
@@ -97,8 +100,9 @@ export function pruneExpiredCache(): number {
   }
 }
 
-// Prune stale cache entries on initial boot
+// Prune stale cache entries on boot and hourly after that
 pruneExpiredCache();
+setInterval(pruneExpiredCache, 3_600_000).unref();
 
 const getStmt = db.prepare("SELECT value, expires FROM cache WHERE key = ?");
 const setStmt = db.prepare("INSERT OR REPLACE INTO cache (key, value, expires) VALUES (?, ?, ?)");
@@ -106,15 +110,24 @@ const inflight = new Map<string, Promise<unknown>>();
 
 export const DAY = 86_400_000;
 
+export function getCache<T>(key: string): T | undefined {
+  const row = getStmt.get(key) as { value: string; expires: number } | undefined;
+  return row && row.expires > Date.now() ? (JSON.parse(row.value) as T) : undefined;
+}
+
+export function putCache(key: string, value: unknown, ttlMs: number) {
+  setStmt.run(key, JSON.stringify(value), Date.now() + ttlMs);
+}
+
 /** Read-through cache with request coalescing. Failed fetches are never cached. */
 export async function cached<T>(key: string, ttlMs: number, fn: () => Promise<T>): Promise<T> {
-  const row = getStmt.get(key) as { value: string; expires: number } | undefined;
-  if (row && row.expires > Date.now()) return JSON.parse(row.value) as T;
+  const hit = getCache<T>(key);
+  if (hit !== undefined) return hit;
   const pending = inflight.get(key);
   if (pending) return pending as Promise<T>;
   const p = fn()
     .then((v) => {
-      setStmt.run(key, JSON.stringify(v), Date.now() + ttlMs);
+      putCache(key, v, ttlMs);
       return v;
     })
     .finally(() => inflight.delete(key));
@@ -138,7 +151,7 @@ export function getDbStats() {
     return {
       status: "connected",
       dataDir: dataDirectory,
-      dbPath: dbFilePath,
+      persistent: dataPersistent,
       sizeBytes: stats.size,
       fieldsCount,
       testsCount,

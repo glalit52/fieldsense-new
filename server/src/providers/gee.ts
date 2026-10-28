@@ -9,13 +9,13 @@ import type { SoilLayer, SoilProfile } from "./soilgrids.ts";
 let ready: Promise<void> | null = null;
 
 export function geeEnabled() {
-  return Boolean(config.gee.keyFile);
+  return Boolean(config.gee.keyFile || config.gee.keyJson);
 }
 
 function init(): Promise<void> {
   if (!geeEnabled()) return Promise.reject(new Error("Earth Engine not configured"));
   ready ??= new Promise<void>((resolve, reject) => {
-    const key = JSON.parse(fs.readFileSync(config.gee.keyFile, "utf8"));
+    const key = JSON.parse(config.gee.keyJson || fs.readFileSync(config.gee.keyFile, "utf8"));
     ee.data.authenticateViaPrivateKey(key, () => {
       ee.initialize(null, null, () => resolve(), (e: unknown) => reject(e), null, config.gee.project || key.project_id);
     }, (e: unknown) => reject(e));
