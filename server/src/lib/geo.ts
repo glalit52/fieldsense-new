@@ -31,7 +31,16 @@ export function cleanRing(ring: Ring): Ring {
 
 /** True when an (open) ring has 3+ distinct corners enclosing at least 1 m², i.e. a valid GeoJSON polygon once closed. */
 export function isArea(ring: Ring) {
-  return ring.length >= 3 && areaHa(ring) >= 1e-4;
+  if (ring.length < 3) return false;
+  // Collinear corners enclose nothing in lon/lat, yet areaHa's sin(lat) terms report a small area for them away
+  // from the equator. Shoelace relative to the first corner, compared with the outline's extent, catches them.
+  const [x0, y0] = ring[0], b = bbox(ring);
+  let s = 0;
+  for (let i = 1; i < ring.length - 1; i++) {
+    s += (ring[i][0] - x0) * (ring[i + 1][1] - y0) - (ring[i + 1][0] - x0) * (ring[i][1] - y0);
+  }
+  const extent = Math.max(b.maxX - b.minX, b.maxY - b.minY);
+  return Math.abs(s) > 1e-9 * extent * extent && areaHa(ring) >= 1e-4;
 }
 
 /** GeoJSON geometry for a field: a closed Polygon when the outline encloses an area, otherwise a Point at its centre. */

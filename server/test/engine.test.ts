@@ -93,6 +93,10 @@ test("polygon validation rejects outlines that don't enclose an area", () => {
   assert.throws(() => parseRing([[1, 1], [1, 1], [1, 1]]), /outline an area/);
   assert.throws(() => parseRing([[0, 0], [0.01, 0], [0, 0]]), /outline an area/);
   assert.throws(() => parseRing([[0, 0], [0.01, 0.01], [0.02, 0.02]]), /outline an area/);
+  // Away from the equator areaHa alone reports a few m² for a straight line.
+  assert.throws(() => parseRing([[75.85, 22.72], [75.86, 22.73], [75.87, 22.74]]), /outline an area/);
+  assert.equal(toGeometry([[75.85, 22.72], [75.95, 22.82], [76.05, 22.92]]).type, "Point");
+  assert.ok(isArea([[75.85, 22.72], [75.8502, 22.72], [75.8502, 22.7202]])); // small real triangle (~20 m sides) still counts
   assert.throws(() => parseRing([[0, 0]]), /3–500/);
 });
 
