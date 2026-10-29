@@ -1,7 +1,7 @@
 import { fromUrl } from "geotiff";
 import { config } from "../config.ts";
 import { cached, cell, DAY } from "../lib/cache.ts";
-import { bbox, pointInRing, toUtm, type Ring } from "../lib/geo.ts";
+import { bbox, pointInRing, toGeometry, toUtm, type Ring } from "../lib/geo.ts";
 import { getJson, pool } from "../lib/http.ts";
 
 export interface SceneIndex {
@@ -16,7 +16,8 @@ export async function searchScenes(ring: Ring, days: number, maxCloud = 60, limi
   const end = new Date(), start = new Date(Date.now() - days * DAY);
   const body = {
     collections: ["sentinel-2-l2a"],
-    intersects: { type: "Polygon", coordinates: [closeRing(ring)] },
+    // A pin (no outline) searches as a Point: a one-corner Polygon is rejected by STAC with HTTP 400.
+    intersects: toGeometry(ring),
     datetime: `${start.toISOString()}/${end.toISOString()}`,
     query: { "eo:cloud_cover": { lt: maxCloud } },
     sortby: [{ field: "properties.datetime", direction: "desc" }],
@@ -24,11 +25,6 @@ export async function searchScenes(ring: Ring, days: number, maxCloud = 60, limi
   };
   const j = await getJson(EARTH_SEARCH, { method: "POST", body: JSON.stringify(body), headers: { "content-type": "application/json" }, source: "Earth Search STAC" });
   return j.features as any[];
-}
-
-function closeRing(r: Ring): Ring {
-  const [a, b] = [r[0], r[r.length - 1]];
-  return a[0] === b[0] && a[1] === b[1] ? r : [...r, a];
 }
 
 // SCL classes kept as clear land: vegetation, bare soil, water(6) excluded, unclassified(7) kept.
@@ -151,7 +147,7 @@ export function s2SeriesCdse(ring: Ring, fromIso: string): Promise<SceneIndex[]>
     const tk = await cdseToken();
     const body = {
       input: {
-        bounds: { geometry: { type: "Polygon", coordinates: [closeRing(ring)] }, properties: { crs: "http://www.opengis.net/def/crs/OGC/1.3/CRS84" } },
+        bounds: { geometry: toGeometry(ring), properties: { crs: "http://www.opengis.net/def/crs/OGC/1.3/CRS84" } },
         data: [{ type: "sentinel-2-l2a", dataFilter: { maxCloudCoverage: 60 } }],
       },
       aggregation: {

@@ -4,7 +4,8 @@ import { saxtonRawls, summariseSoil, textureClass } from "../src/engine/soil.ts"
 import { limeAdvice } from "../src/engine/lime.ts";
 import { wetBulb } from "../src/engine/operations.ts";
 import { mannKendall, quantile, senSlope, trapezoid } from "../src/engine/stats.ts";
-import { areaHa, pointInRing, toUtm } from "../src/lib/geo.ts";
+import { areaHa, cleanRing, isArea, pointInRing, toGeometry, toUtm } from "../src/lib/geo.ts";
+import { parseRing } from "../src/lib/validate.ts";
 import { climateSoilEstimate } from "../src/providers/soilgrids.ts";
 import { assessCrop, prepare, soilFactors } from "../src/engine/simulate.ts";
 import { CROPS, cropById } from "../src/engine/crops.ts";
@@ -70,6 +71,29 @@ test("geometry: UTM, area and point-in-polygon", () => {
   near(areaHa(sq), 123.6, 2);
   assert.ok(pointInRing(0.005, 0.005, sq));
   assert.ok(!pointInRing(0.02, 0.005, sq));
+});
+
+test("geometry sent to STAC is always valid GeoJSON: a closed polygon or a point", () => {
+  const sq: [number, number][] = [[0, 0], [0.01, 0], [0.01, 0.01], [0, 0.01]];
+  // A pin used to go out as a one-corner Polygon, which Earth Search rejects with HTTP 400.
+  assert.deepEqual(toGeometry([[77.5, 12.9]]), { type: "Point", coordinates: [77.5, 12.9] });
+  const poly = toGeometry([...sq, sq[0]]) as { type: string; coordinates: [number, number][][] };
+  assert.equal(poly.type, "Polygon");
+  assert.equal(poly.coordinates[0].length, 5);
+  assert.deepEqual(poly.coordinates[0][0], poly.coordinates[0][4]);
+  assert.equal(toGeometry([[1, 1], [1, 1], [1, 1]]).type, "Point");
+  assert.equal(toGeometry([[0, 0], [0.01, 0.01], [0.02, 0.02]]).type, "Point"); // collinear
+  assert.deepEqual(cleanRing([[0, 0], [0, 0], [1, 0], [1, 1], [0, 0]]), [[0, 0], [1, 0], [1, 1]]);
+  assert.ok(isArea(sq) && !isArea([[0, 0], [1, 0], [0, 0]]));
+});
+
+test("polygon validation rejects outlines that don't enclose an area", () => {
+  const sq: [number, number][] = [[0, 0], [0.01, 0], [0.01, 0.01], [0, 0.01]];
+  assert.deepEqual(parseRing([...sq, sq[0]]), sq); // GeoJSON closing corner is dropped
+  assert.throws(() => parseRing([[1, 1], [1, 1], [1, 1]]), /outline an area/);
+  assert.throws(() => parseRing([[0, 0], [0.01, 0], [0, 0]]), /outline an area/);
+  assert.throws(() => parseRing([[0, 0], [0.01, 0.01], [0.02, 0.02]]), /outline an area/);
+  assert.throws(() => parseRing([[0, 0]]), /3–500/);
 });
 
 test("pH response is gentle near the optimum and severe outside the crop's range", () => {

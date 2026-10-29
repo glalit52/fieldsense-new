@@ -1,6 +1,6 @@
 import { CROPS } from "../engine/crops.ts";
 import type { ReportInput } from "../engine/report.ts";
-import { centroid, type Ring } from "./geo.ts";
+import { centroid, cleanRing, isArea, type Ring } from "./geo.ts";
 
 /** An error with an HTTP status; the app error handler sends `message` to the client. */
 export class HttpError extends Error {
@@ -30,8 +30,11 @@ export function str(v: unknown, max: number, fallback = ""): string {
 
 export function parseRing(p: unknown): Ring | undefined {
   if (p == null) return undefined;
-  if (!Array.isArray(p) || p.length < 3 || p.length > 500) throw badRequest("polygon must be 3–500 [lon, lat] pairs");
-  return p.map((pt: any) => [num(pt?.[0], "polygon lon", -180, 180), num(pt?.[1], "polygon lat", -90, 90)] as [number, number]);
+  // 501 allows a 500-corner outline sent GeoJSON-style with its first corner repeated at the end.
+  if (!Array.isArray(p) || p.length < 3 || p.length > 501) throw badRequest("polygon must be 3–500 [lon, lat] pairs");
+  const ring = cleanRing(p.map((pt: any) => [num(pt?.[0], "polygon lon", -180, 180), num(pt?.[1], "polygon lat", -90, 90)] as [number, number]));
+  if (!isArea(ring)) throw badRequest("polygon must outline an area: at least 3 different corners that are not all in a line");
+  return ring;
 }
 
 /** A point or outline: the outline's centroid wins over lat/lon when both are given. */

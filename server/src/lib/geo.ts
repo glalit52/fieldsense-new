@@ -17,6 +17,31 @@ export function pointInRing(x: number, y: number, ring: Ring) {
   return inside;
 }
 
+/** Drops non-finite points, repeated consecutive corners and the GeoJSON closing corner: an open ring of distinct corners. */
+export function cleanRing(ring: Ring): Ring {
+  const same = (a: LonLat, b: LonLat) => Math.abs(a[0] - b[0]) < 1e-9 && Math.abs(a[1] - b[1]) < 1e-9;
+  const out: Ring = [];
+  for (const p of ring) {
+    if (!Number.isFinite(p?.[0]) || !Number.isFinite(p?.[1])) continue;
+    if (!out.length || !same(out[out.length - 1], p)) out.push([p[0], p[1]]);
+  }
+  while (out.length > 1 && same(out[0], out[out.length - 1])) out.pop();
+  return out;
+}
+
+/** True when an (open) ring has 3+ distinct corners enclosing at least 1 m², i.e. a valid GeoJSON polygon once closed. */
+export function isArea(ring: Ring) {
+  return ring.length >= 3 && areaHa(ring) >= 1e-4;
+}
+
+/** GeoJSON geometry for a field: a closed Polygon when the outline encloses an area, otherwise a Point at its centre. */
+export function toGeometry(ring: Ring): { type: "Polygon"; coordinates: Ring[] } | { type: "Point"; coordinates: LonLat } {
+  const r = cleanRing(ring);
+  if (isArea(r)) return { type: "Polygon", coordinates: [[...r, r[0]]] };
+  if (!r.length) throw new Error("Field location is missing");
+  return { type: "Point", coordinates: centroid(r) };
+}
+
 export function centroid(ring: Ring): LonLat {
   const b = bbox(ring);
   return [(b.minX + b.maxX) / 2, (b.minY + b.maxY) / 2];

@@ -1,7 +1,7 @@
 import { randomUUID } from "node:crypto";
 import mongoose from "mongoose";
 import { db } from "../lib/cache.ts";
-import type { Ring } from "../lib/geo.ts";
+import { cleanRing, isArea, type Ring } from "../lib/geo.ts";
 import { HttpError, notFound, type ActivityInput, type ActivityType, type SoilTestInput } from "../lib/validate.ts";
 import { Field } from "../models/Field.ts";
 
@@ -44,8 +44,14 @@ const sqlActivity = (a: any): Activity => ({
   id: String(a.id), date: a.date, type: a.type, crop: a.crop ?? "", product: a.product ?? "", quantity: a.quantity, unit: a.unit ?? "",
   cost: a.cost, yieldTPerHa: a.yield_t_per_ha, notes: a.notes ?? "",
 });
+/** Outlines saved before polygon validation was strict may not enclose an area; those load as a plain pin. */
+function storedRing(p: unknown): Ring | null {
+  if (!Array.isArray(p)) return null;
+  const ring = cleanRing(p as Ring);
+  return isArea(ring) ? ring : null;
+}
 const sqlField = (r: any, tests: SoilTest[], activities: Activity[]): SavedField => ({
-  id: r.id, name: r.name, lat: r.lat, lon: r.lon, polygon: r.polygon ? JSON.parse(r.polygon) : null, notes: r.notes ?? "",
+  id: r.id, name: r.name, lat: r.lat, lon: r.lon, polygon: storedRing(r.polygon ? JSON.parse(r.polygon) : null), notes: r.notes ?? "",
   summary: r.summary ? JSON.parse(r.summary) : null, tests, activities, created: r.created, updated: r.updated,
 });
 /** Groups child rows by field id in one pass, so listing N fields is not N×M. */
@@ -123,7 +129,7 @@ export const sqliteFieldStore: FieldStore = {
 
 // ---------- MongoDB: per-user fields when accounts are enabled ----------
 const mongoField = (f: any): SavedField => ({
-  id: String(f._id), name: f.name, lat: f.lat, lon: f.lon, polygon: f.polygon?.length ? f.polygon : null, notes: f.notes ?? "",
+  id: String(f._id), name: f.name, lat: f.lat, lon: f.lon, polygon: storedRing(f.polygon), notes: f.notes ?? "",
   summary: f.summary ?? null,
   tests: (f.tests ?? []).map((t: any) => ({
     id: String(t._id), date: t.date, ph: t.ph ?? null, organicCarbon: t.organicCarbon ?? null, clay: t.clay ?? null, p: t.p ?? null, k: t.k ?? null, notes: t.notes ?? "",

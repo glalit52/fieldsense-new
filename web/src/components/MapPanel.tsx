@@ -85,7 +85,11 @@ export default function MapPanel({ point, polygon, onPoint, onPolygon, ndviTiles
             </LayersControl.Overlay>
           )}
         </LayersControl>
-        <Clicks mode={mode} onPoint={(a, b) => { onPolygon(null); onPoint(a, b); }} onVertex={(ll) => setDraft((d) => [...d, ll])} />
+        <Clicks mode={mode} onPoint={(a, b) => { onPolygon(null); onPoint(a, b); }} onVertex={(ll) => setDraft((d) => {
+          // A double-click lands twice on the same corner; a repeated corner doesn't outline anything.
+          const last = d[d.length - 1];
+          return last && last[0] === ll[0] && last[1] === ll[1] ? d : [...d, ll];
+        })} />
         <FlyTo target={fly} />
         <Follow point={point} />
         {saved.map((s) => (
