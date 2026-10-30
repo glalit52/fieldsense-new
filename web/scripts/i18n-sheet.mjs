@@ -45,15 +45,20 @@ if (mode === "export") {
   for (const l of LANGS) {
     if (col[l] < 0) continue;
     const dict = load(l);
+    let edits = 0;
     for (const r of rows) {
       const [en] = r, v = r[col[l]]?.trim();
-      if (!en || !(en in dict) || !v || v === dict[en]) continue;
+      if (!en || !(en in dict) || !v) continue;
+      // Keys keep their spacing (e.g. " − irrigation water"); spreadsheets often trim it, so it's re-applied here.
+      const next = en.match(/^\s*/)[0] + v + en.match(/\s*$/)[0];
+      if (next === dict[en]) continue;
       if (placeholders(en) !== placeholders(v)) { rejected.push(`${l}: "${en}" → placeholders must be ${placeholders(en) || "none"}`); continue; }
-      const lead = en.match(/^\s*/)[0], trail = en.match(/\s*$/)[0];
-      dict[en] = lead + v + trail;
-      changed++;
+      dict[en] = next;
+      edits++;
     }
-    fs.writeFileSync(path.join(dir, `${l}.json`), JSON.stringify(Object.fromEntries(Object.entries(dict).sort(([a], [b]) => (a < b ? -1 : 1))), null, 1) + "\n");
+    if (!edits) continue;
+    changed += edits;
+    fs.writeFileSync(path.join(dir, `${l}.json`), JSON.stringify(Object.fromEntries(Object.entries(dict).sort(([a], [b]) => (a < b ? -1 : 1))), null, 1));
   }
   console.log(`Updated ${changed} translations.`);
   if (rejected.length) console.log(`Rejected ${rejected.length}:\n${rejected.join("\n")}`);
