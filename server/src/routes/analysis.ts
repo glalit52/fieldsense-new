@@ -1,26 +1,19 @@
-import { randomUUID } from "node:crypto";
 import zlib from "node:zlib";
 import type { FastifyInstance, FastifyReply, FastifyRequest } from "fastify";
 import { agrisMode, ask } from "../agris.ts";
 import { authEnabled, config, integrationStatus } from "../config.ts";
-import { CROPS } from "../engine/crops.ts";
-import { cachedReport, landHealth, type Report } from "../engine/report.ts";
-import { cached, DAY, getCache, getDbStats, putCache } from "../lib/cache.ts";
+import { CROPS, cropById } from "../engine/crops.ts";
+import { nextSowingDate, nutrientPlan } from "../engine/nutrients.ts";
+import { cachedReport, landHealth } from "../engine/report.ts";
+import { cached, DAY, getDbStats } from "../lib/cache.ts";
 import type { Ring } from "../lib/geo.ts";
 import { isMongoConnected } from "../lib/mongoose.ts";
-import { badRequest, num, parseInput, parseLocation, parseRing } from "../lib/validate.ts";
+import { loadReport, requireReport, storeReport } from "../lib/reports.ts";
+import { reportPdf, sendPdf } from "../lib/reportPdf.ts";
+import { badRequest, num, optNum, parseInput, parseLocation, parseRing } from "../lib/validate.ts";
 import * as gee from "../providers/gee.ts";
 import { search } from "../providers/geocode.ts";
 import { ndviPngCdse, s2SeriesCdse, s2SeriesKeyless, searchScenes } from "../providers/sentinel.ts";
-
-/** Reports are kept a day so Agris follow-ups survive restarts and redeploys. */
-const REPORT_TTL = DAY;
-const storeReport = (r: Report) => {
-  const id = randomUUID();
-  putCache(`report-id:${id}`, r, REPORT_TTL);
-  return id;
-};
-const loadReport = (id: string) => (/^[0-9a-f-]{36}$/.test(id) ? getCache<Report>(`report-id:${id}`) : undefined);
 
 /**
  * Takes over the response for a long-lived stream. Headers already set on the reply (CORS, security) are kept.
@@ -150,11 +143,39 @@ export async function analysisRoutes(app: FastifyInstance) {
     if (!question) throw badRequest("question is required");
     const out = openStream(req, reply, "text/event-stream", false);
     try {
-      for await (const ev of ask(report, question, typeof b.conversationId === "string" ? b.conversationId : undefined)) out.write(`data: ${JSON.stringify(ev)}\n\n`);
+      const language = typeof b.language === "string" && /^[a-z]{2}$/.test(b.language) ? b.language : undefined;
+      for await (const ev of ask(report, question, typeof b.conversationId === "string" ? b.conversationId : undefined, language)) out.write(`data: ${JSON.stringify(ev)}\n\n`);
     } catch (e) {
       req.log.error({ err: e }, "agris failed");
       out.write(`data: ${JSON.stringify({ type: "text", text: "Sorry, the assistant failed to answer. Please try again." })}\n\n`);
     }
     out.end();
+  });
+
+  /** Fertiliser (N-P-K) plan for a crop on this report's soil; lab P and K tighten it. */
+  app.post("/api/nutrients", async (req) => {
+    const b: any = req.body ?? {};
+    const report = requireReport(b.reportId);
+    const assessed = (typeof b.cropId === "string" && report.crops.find((c: any) => c.id === b.cropId))
+      || report.crops.find((c: any) => c.id === report.selectedCrop) || report.crops.find((c: any) => c.group !== "Forage") || report.crops[0];
+    const crop = cropById(assessed.id)!;
+    const typical = Math.max(0.1, Math.round((assessed.yieldTPerHa.median ?? 0) * 10) / 10);
+    const soc = report.soil.topsoil.soc?.p50;
+    return nutrientPlan({
+      crop,
+      targetYield: optNum(b.targetYield, "target yield", 0.1, crop.yMax * 1.2) ?? typical,
+      organicCarbonPct: soc != null ? soc / 10 : null,
+      ph: report.soil.topsoil.ph?.p50 ?? null,
+      p: optNum(b.p, "lab P", 0, 1000), k: optNum(b.k, "lab K", 0, 5000),
+      sowingDate: typeof b.sowingDate === "string" && /^\d{4}-\d{2}-\d{2}$/.test(b.sowingDate) ? b.sowingDate : nextSowingDate(assessed.sowing?.bestDoy),
+    });
+  });
+
+  /** The report as a printable PDF. */
+  app.post("/api/report.pdf", async (req, reply) => {
+    const b: any = req.body ?? {};
+    const report = requireReport(b.reportId);
+    const name = typeof b.fieldName === "string" ? b.fieldName.slice(0, 120) : undefined;
+    return sendPdf(reply, reportPdf(report, { fieldName: name }), name || report.location.place || `${report.location.lat.toFixed(3)}_${report.location.lon.toFixed(3)}`);
   });
 }

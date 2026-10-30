@@ -57,6 +57,9 @@ Without `MONGO_URI`, saved fields are shared by everyone who can open the site. 
 | `API_KEYS` | Comma-separated keys for `POST /api/v1/batch` (`x-api-key` header). Leave empty only if the batch API should be open. |
 | `CORS_ORIGINS` | Other websites allowed to call the API from a browser. Not needed for the bundled web app. |
 | `LOG_LEVEL` | `info` (default), `warn`, `debug`. |
+| `RESEND_API_KEY`, `ALERTS_FROM` | Emailed weather alerts for users who switch them on (needs accounts). `ALERTS_FROM` must be on a domain verified in Resend, e.g. `FieldSense <alerts@sensegrass.com>`. Without them alerts are in-app only. |
+| `ALERTS_ENABLED` | Set `false` to stop the background forecast scan of saved fields. |
+| `APP_URL` | Link in alert emails. Defaults to the Railway public domain. |
 | `HOST` | Bind address, default `::` (IPv4 + IPv6). Falls back to `0.0.0.0` where IPv6 is off. |
 
 ## 4. What the deployment does

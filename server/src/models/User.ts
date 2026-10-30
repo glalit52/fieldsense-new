@@ -11,6 +11,8 @@ export interface UserAttrs {
   lastLogin?: Date;
   /** Tokens issued before this are rejected, so a password change signs out other sessions. */
   passwordChangedAt?: Date;
+  /** Opted in to emailed weather and spray alerts for saved fields. */
+  alertEmails: boolean;
   createdAt: Date;
   updatedAt: Date;
 }
@@ -31,6 +33,7 @@ const userSchema = new Schema<UserAttrs, Model<UserAttrs, {}, UserMethods>, User
     role: { type: String, enum: ["user", "admin"], default: "user" },
     lastLogin: { type: Date },
     passwordChangedAt: { type: Date },
+    alertEmails: { type: Boolean, default: false },
   },
   { timestamps: true },
 );
@@ -55,5 +58,5 @@ export const isAdmin = (u: Pick<UserAttrs, "role" | "email">) => u.role === "adm
 /** The user as the API returns it: never the password hash. */
 export const publicUser = (u: UserDoc) => ({
   id: String(u._id), name: u.name, email: u.email, organization: u.organization ?? "", role: isAdmin(u) ? "admin" : u.role,
-  createdAt: u.createdAt, lastLogin: u.lastLogin ?? null,
+  createdAt: u.createdAt, lastLogin: u.lastLogin ?? null, alertEmails: Boolean(u.alertEmails),
 });

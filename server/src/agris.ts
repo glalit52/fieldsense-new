@@ -43,7 +43,10 @@ export function agrisMode() {
  * Streams an answer. The conversation is kept server-side and only ever appended to,
  * so Claude's own content blocks (including thinking) are returned unchanged each turn.
  */
-export async function* ask(report: Report, question: string, conversationId?: string): AsyncGenerator<{ type: "meta"; conversationId: string; mode: string } | { type: "text"; text: string } | { type: "done" }> {
+/** UI languages Agris can be asked to answer in by default. */
+const LANGUAGES: Record<string, string> = { en: "English", hi: "Hindi", mr: "Marathi", pa: "Punjabi", bn: "Bengali", ta: "Tamil", te: "Telugu" };
+
+export async function* ask(report: Report, question: string, conversationId?: string, language?: string): AsyncGenerator<{ type: "meta"; conversationId: string; mode: string } | { type: "text"; text: string } | { type: "done" }> {
   const reportKey = `${report.location.lat},${report.location.lon},${report.generatedAt}`;
   let id = conversationId && conversations.has(conversationId) ? conversationId : randomUUID();
   let conv = conversations.get(id);
@@ -73,6 +76,9 @@ export async function* ask(report: Report, question: string, conversationId?: st
     output_config: { effort: "low" },
     system: [
       { type: "text", text: SYSTEM },
+      ...(language && language !== "en" && LANGUAGES[language]
+        ? [{ type: "text" as const, text: `The farmer's app is set to ${LANGUAGES[language]}. Answer in ${LANGUAGES[language]} (in its own script) unless they write in another language.` }]
+        : []),
       { type: "text", text: `FIELD REPORT (JSON):\n${conv.context}`, cache_control: { type: "ephemeral" } },
     ],
     messages: conv.messages,

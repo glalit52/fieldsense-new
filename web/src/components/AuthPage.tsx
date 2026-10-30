@@ -1,5 +1,6 @@
 import { useState, type FormEvent } from "react";
 import { api, type User } from "../lib/api.ts";
+import { useT } from "../lib/i18n.tsx";
 
 interface AuthPageProps {
   initialMode?: "login" | "signup";
@@ -14,6 +15,7 @@ const PASSWORD_MIN = 8;
 const DEV = Boolean((import.meta as any).env?.DEV);
 
 export default function AuthPage({ initialMode = "login", contact = "lalit@sensegrass.com", notice, onSuccess }: AuthPageProps) {
+  const t = useT();
   const [mode, setMode] = useState<"login" | "signup">(initialMode);
   const [form, setForm] = useState({
     name: "",
@@ -38,7 +40,7 @@ export default function AuthPage({ initialMode = "login", contact = "lalit@sense
     try {
       if (mode === "login") {
         if (!form.email || !form.password) {
-          setError("Please provide both email and password");
+          setError(t("Please provide both email and password"));
           setBusy(false);
           return;
         }
@@ -46,17 +48,17 @@ export default function AuthPage({ initialMode = "login", contact = "lalit@sense
         onSuccess(user);
       } else {
         if (!form.name.trim() || form.name.trim().length < 2) {
-          setError("Please enter your full name (at least 2 characters)");
+          setError(t("Please enter your full name (at least 2 characters)"));
           setBusy(false);
           return;
         }
         if (!form.email || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(form.email)) {
-          setError("Please enter a valid email address");
+          setError(t("Please enter a valid email address"));
           setBusy(false);
           return;
         }
         if (!form.password || form.password.length < PASSWORD_MIN) {
-          setError(`Password must be at least ${PASSWORD_MIN} characters long`);
+          setError(t("Password must be at least {n} characters long", { n: PASSWORD_MIN }));
           setBusy(false);
           return;
         }
@@ -64,7 +66,7 @@ export default function AuthPage({ initialMode = "login", contact = "lalit@sense
         onSuccess(user);
       }
     } catch (err: any) {
-      setError(err.message || "Authentication failed. Please check your details.");
+      setError(err.message || `${t("Authentication failed.")} ${t("Please check your details.")}`);
     } finally {
       setBusy(false);
     }
@@ -91,7 +93,7 @@ export default function AuthPage({ initialMode = "login", contact = "lalit@sense
           </div>
           <h1 className="auth-brand-title">FieldSense</h1>
           <p className="auth-brand-tagline">
-            Precision soil intelligence, 35-yr agro-climate & satellite monitoring
+            {t("Precision soil intelligence, 35-yr agro-climate & satellite monitoring")}
           </p>
         </div>
 
@@ -108,7 +110,7 @@ export default function AuthPage({ initialMode = "login", contact = "lalit@sense
                 setError("");
               }}
             >
-              Sign In
+              {t("Sign In")}
             </button>
             <button
               type="button"
@@ -120,7 +122,7 @@ export default function AuthPage({ initialMode = "login", contact = "lalit@sense
                 setError("");
               }}
             >
-              Create Account
+              {t("Create Account")}
             </button>
           </div>
 
@@ -136,7 +138,7 @@ export default function AuthPage({ initialMode = "login", contact = "lalit@sense
           <form className="auth-form" onSubmit={handleSubmit}>
             {mode === "signup" && (
               <div className="auth-field">
-                <label htmlFor="auth-name">Full Name</label>
+                <label htmlFor="auth-name">{t("Full Name")}</label>
                 <div className="auth-input-group">
                   <span className="auth-input-icon">👤</span>
                   <input
@@ -146,7 +148,7 @@ export default function AuthPage({ initialMode = "login", contact = "lalit@sense
                     minLength={2}
                     maxLength={100}
                     autoComplete="name"
-                    placeholder="e.g. Lalit Gautam"
+                    placeholder={t("e.g. {name}", { name: "Lalit Gautam" })}
                     value={form.name}
                     onChange={update("name")}
                   />
@@ -155,7 +157,7 @@ export default function AuthPage({ initialMode = "login", contact = "lalit@sense
             )}
 
             <div className="auth-field">
-              <label htmlFor="auth-email">Email Address</label>
+              <label htmlFor="auth-email">{t("Email Address")}</label>
               <div className="auth-input-group">
                 <span className="auth-input-icon">✉️</span>
                 <input
@@ -172,8 +174,8 @@ export default function AuthPage({ initialMode = "login", contact = "lalit@sense
 
             <div className="auth-field">
               <div className="auth-field-header">
-                <label htmlFor="auth-password">Password</label>
-                {mode === "signup" && <span className="auth-hint">Min {PASSWORD_MIN} characters</span>}
+                <label htmlFor="auth-password">{t("Password")}</label>
+                {mode === "signup" && <span className="auth-hint">{t("Min {n} characters", { n: PASSWORD_MIN })}</span>}
               </div>
               <div className="auth-input-group">
                 <span className="auth-input-icon">🔒</span>
@@ -192,7 +194,7 @@ export default function AuthPage({ initialMode = "login", contact = "lalit@sense
                   type="button"
                   className="auth-pw-toggle"
                   onClick={() => setShowPassword((v) => !v)}
-                  title={showPassword ? "Hide password" : "Show password"}
+                  title={showPassword ? t("Hide password") : t("Show password")}
                 >
                   {showPassword ? "🙈" : "👁️"}
                 </button>
@@ -202,8 +204,8 @@ export default function AuthPage({ initialMode = "login", contact = "lalit@sense
             {mode === "signup" && (
               <div className="auth-field">
                 <div className="auth-field-header">
-                  <label htmlFor="auth-org">Farm or Organisation</label>
-                  <span className="auth-hint">Optional</span>
+                  <label htmlFor="auth-org">{t("Farm or Organisation")}</label>
+                  <span className="auth-hint">{t("Optional")}</span>
                 </div>
                 <div className="auth-input-group">
                   <span className="auth-input-icon">🌾</span>
@@ -212,7 +214,7 @@ export default function AuthPage({ initialMode = "login", contact = "lalit@sense
                     type="text"
                     maxLength={150}
                     autoComplete="organization"
-                    placeholder="e.g. Green Valley Farm"
+                    placeholder={t("e.g. Green Valley Farm")}
                     value={form.organization}
                     onChange={update("organization")}
                   />
@@ -223,12 +225,12 @@ export default function AuthPage({ initialMode = "login", contact = "lalit@sense
             <button type="submit" className="auth-submit-btn" disabled={busy}>
               {busy ? (
                 <span className="auth-loading-text">
-                  <span className="auth-spinner" /> Verifying...
+                  <span className="auth-spinner" /> {t("Verifying...")}
                 </span>
               ) : mode === "login" ? (
-                "Sign In to FieldSense"
+                t("Sign In to FieldSense")
               ) : (
-                "Create FieldSense Account"
+                t("Create FieldSense Account")
               )}
             </button>
           </form>
@@ -237,7 +239,7 @@ export default function AuthPage({ initialMode = "login", contact = "lalit@sense
           {DEV && (
             <div className="auth-demo-shortcut">
               <button type="button" className="auth-demo-btn" onClick={prefillDemo}>
-                ⚡ Quick Fill Demo Account
+                ⚡ {t("Quick Fill Demo Account")}
               </button>
             </div>
           )}
@@ -245,7 +247,7 @@ export default function AuthPage({ initialMode = "login", contact = "lalit@sense
           <div className="auth-footer-toggle">
             {mode === "login" ? (
               <p>
-                Don't have an account yet?{" "}
+                {t("Don't have an account yet?")}{" "}
                 <button
                   type="button"
                   className="auth-link-btn"
@@ -254,12 +256,12 @@ export default function AuthPage({ initialMode = "login", contact = "lalit@sense
                     setError("");
                   }}
                 >
-                  Create one now
+                  {t("Create one now")}
                 </button>
               </p>
             ) : (
               <p>
-                Already have an account?{" "}
+                {t("Already have an account?")}{" "}
                 <button
                   type="button"
                   className="auth-link-btn"
@@ -268,7 +270,7 @@ export default function AuthPage({ initialMode = "login", contact = "lalit@sense
                     setError("");
                   }}
                 >
-                  Sign in
+                  {t("Sign in")}
                 </button>
               </p>
             )}
@@ -276,9 +278,9 @@ export default function AuthPage({ initialMode = "login", contact = "lalit@sense
         </div>
 
         <div className="auth-page-footer">
-          <span>Powered by SenseGrass Inc. · Enterprise Agricultural Intelligence</span>
+          <span>{t("Powered by SenseGrass Inc. · Enterprise Agricultural Intelligence")}</span>
           <a href={`mailto:${contact}`} className="auth-support-link">
-            Need support? {contact}
+            {t("Need support?")} {contact}
           </a>
         </div>
       </div>

@@ -4,7 +4,9 @@ import { authEnabled } from "../config.ts";
 import { clearSession, requireAuth, requireDb, setSession, signToken } from "../lib/auth.ts";
 import { badRequest, HttpError, str } from "../lib/validate.ts";
 import { Field } from "../models/Field.ts";
+import { FieldCheck } from "../models/FieldCheck.ts";
 import { PASSWORD_MIN, publicUser, User } from "../models/User.ts";
+import { removeOwnerAlerts } from "../services/alerts.ts";
 
 /** Brute-force guard on credential endpoints, on top of the global limit. */
 const strict = { config: { rateLimit: { max: 10, timeWindow: "1 minute" } } };
@@ -86,6 +88,8 @@ export async function authRoutes(app: FastifyInstance) {
     const u = await User.findById(req.user!._id).select("+password");
     if (!u || !(await u.comparePassword(String((req.body as any)?.password ?? "")))) throw new HttpError(401, "Password is wrong");
     await Field.deleteMany({ userId: u._id });
+    await FieldCheck.deleteMany({ userId: u._id });
+    removeOwnerAlerts(String(u._id));
     await u.deleteOne();
     clearSession(reply);
     return { ok: true };

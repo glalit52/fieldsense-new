@@ -40,6 +40,15 @@ export const config = {
     clientSecret: env.CDSE_CLIENT_SECRET || "",
   },
   openWeatherKey: env.OPENWEATHER_API_KEY || "",
+  alerts: {
+    /** Daily forecast scan of saved fields for frost, heat, heavy rain, gusts, blight and spray windows. */
+    enabled: env.ALERTS_ENABLED !== "false",
+    /** Resend (resend.com) key and sender, e.g. "FieldSense <alerts@sensegrass.com>"; without both, alerts stay in the app. */
+    resendKey: env.RESEND_API_KEY || "",
+    from: env.ALERTS_FROM || "",
+  },
+  /** Public URL of the app for links in emails. */
+  appUrl: env.APP_URL || (env.RAILWAY_PUBLIC_DOMAIN ? `https://${env.RAILWAY_PUBLIC_DOMAIN}` : ""),
   openMeteoKey: env.OPEN_METEO_API_KEY || "",
   userAgent: `FieldSense/1.0 (${env.CONTACT_EMAIL || "lalit@sensegrass.com"})`,
 };
@@ -67,5 +76,6 @@ export function integrationStatus() {
     earthEngine: Boolean(config.gee.keyFile || config.gee.keyJson),
     openWeather: Boolean(config.openWeatherKey),
     claude: Boolean(config.anthropicKey),
+    alertEmails: Boolean(config.alerts.resendKey && config.alerts.from),
   };
 }

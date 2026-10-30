@@ -18,6 +18,7 @@ export interface User {
   organization: string;
   role: string;
   createdAt: string;
+  alertEmails?: boolean;
 }
 
 /** Stands in for a signed-in user when the server runs without accounts (no MONGO_URI): fields are shared locally. */
@@ -45,6 +46,45 @@ export interface Activity {
   yieldTPerHa: number | null;
   notes: string;
 }
+/** One archived check of a saved field, as the history list shows it. */
+export interface CheckMeta {
+  id: string;
+  checkedAt: string;
+  headline: string;
+  soilPh: number | null;
+  organicCarbonPct: number | null;
+  labUsed: boolean;
+  rainPerYear: number;
+  lime: { call: string; rateTPerHa: number };
+  topCrops: { id: string; name: string; score: number; median: number }[];
+  risks: { id: string; label: string; level: "low" | "moderate" | "high" }[];
+  landChangePct: number | null;
+  selectedCrop: string | null;
+}
+export interface SeasonReview {
+  harvestDate: string; year: number; crop: string; cropId: string | null; actual: number;
+  modelled: number | null; typical: number | null; good: number | null; irrigated: number | null; gapPct: number | null;
+  verdict: "above" | "on par" | "below" | "no model";
+  weather: { year: number; rain: number; rainNormal: number; rainPct: number; hotDays: number; hotDaysNormal: number; longestDrySpell: number; drySpellNormal: number } | null;
+  inputs: { sowingDate: string | null; fertiliserEntries: number; irrigationMm: number; spend: number };
+  reasons: string[];
+}
+export interface NutrientPlan {
+  crop: { id: string; name: string; product: string };
+  targetYield: number;
+  basis: { nSupplyKgHa: number; nRecovery: number; legume: boolean; organicCarbonPct: number | null; ph: number | null; p: number | null; k: number | null; pClass: string | null; kClass: string | null; uptakePerTonne: { n: number; p2o5: number; k2o: number } };
+  nutrients: { n: number; p2o5: number; k2o: number };
+  products: { name: string; grade: string; kgPerHa: number }[];
+  applications: { date: string; daysAfterSowing: number; stage: string; n: number; p2o5: number; k2o: number; products: { name: string; grade: string; kgPerHa: number }[] }[];
+  notes: string[];
+}
+export type AlertKind = "frost_hard" | "frost_light" | "heat" | "heavy_rain" | "gusts" | "blight" | "disease" | "spray";
+export interface FieldAlert {
+  id: string; fieldId: string; fieldName: string; kind: AlertKind; level: "danger" | "warn" | "info";
+  day: string; value: number | null; detail: { from?: string; to?: string } | null; created: number; read: boolean;
+}
+export interface AlertsState { alerts: FieldAlert[]; unread: number; email: { available: boolean; enabled: boolean } }
+
 export interface AdminUser extends User {
   lastLogin: string | null;
   fields: number;
@@ -245,11 +285,13 @@ export async function* askAgris(
   reportId: string,
   question: string,
   conversationId?: string,
+  language?: string,
 ) {
   const reader = await stream("/api/agris", {
     reportId,
     question,
     conversationId,
+    language,
   });
   let buf = "";
   for (;;) {
@@ -263,6 +305,24 @@ export async function* askAgris(
       if (chunk.startsWith("data: ")) yield JSON.parse(chunk.slice(6));
     }
   }
+}
+
+/** Fetches a PDF (with the session's auth) and saves it under the server's filename. */
+async function downloadPdf(path: string, init: RequestInit & { json?: unknown } = {}) {
+  const { json, ...rest } = init;
+  const res = await fetch(path, {
+    credentials: "same-origin",
+    ...rest,
+    headers: { ...authHeaders(), ...(json !== undefined ? JSON_HEADERS : {}) },
+    ...(json !== undefined && { body: JSON.stringify(json) }),
+  });
+  if (!res.ok) throw new ApiError(res.status, (await res.json().catch(() => null))?.error ?? `HTTP ${res.status}`);
+  const name = /filename="([^"]+)"/.exec(res.headers.get("content-disposition") ?? "")?.[1] ?? "fieldsense-report.pdf";
+  const a = document.createElement("a");
+  a.href = URL.createObjectURL(await res.blob());
+  a.download = name;
+  a.click();
+  setTimeout(() => URL.revokeObjectURL(a.href), 10_000);
 }
 
 export const api = {
@@ -313,6 +373,28 @@ export const api = {
     request<SavedField>(`/api/fields/${id}/activities/${activityId}`, {
       method: "DELETE",
     }),
+
+  archiveCheck: (fieldId: string, reportId: string) =>
+    request<{ check: CheckMeta; field: SavedField }>(`/api/fields/${fieldId}/checks`, { method: "POST", json: { reportId } }),
+  checks: (fieldId: string) => request<CheckMeta[]>(`/api/fields/${fieldId}/checks`),
+  openCheck: (fieldId: string, checkId: string) =>
+    request<{ check: CheckMeta; report: Report; reportId: string }>(`/api/fields/${fieldId}/checks/${checkId}`),
+  deleteCheck: (fieldId: string, checkId: string) =>
+    request<{ ok: true }>(`/api/fields/${fieldId}/checks/${checkId}`, { method: "DELETE" }),
+  review: (fieldId: string) =>
+    request<{ checkedAt: string | null; seasons: SeasonReview[]; message?: string }>(`/api/fields/${fieldId}/review`),
+  fieldPdf: (fieldId: string, checkId?: string) =>
+    downloadPdf(`/api/fields/${fieldId}/report.pdf${checkId ? `?check=${encodeURIComponent(checkId)}` : ""}`),
+  reportPdf: (reportId: string, fieldName?: string) =>
+    downloadPdf("/api/report.pdf", { method: "POST", json: { reportId, fieldName } }),
+  nutrients: (b: { reportId: string; cropId?: string; targetYield?: number; p?: number | null; k?: number | null; sowingDate?: string }) =>
+    request<NutrientPlan>("/api/nutrients", { method: "POST", json: b }),
+
+  alerts: () => request<AlertsState>("/api/alerts"),
+  refreshAlerts: () => request<AlertsState & { scanned: number; raised: number }>("/api/alerts/refresh", { method: "POST" }),
+  readAlerts: (ids?: string[]) => request<{ ok: true }>("/api/alerts/read", { method: "POST", json: ids ? { ids } : {} }),
+  alertSettings: (email: boolean) =>
+    request<{ email: AlertsState["email"] }>("/api/alerts/settings", { method: "PUT", json: { email } }),
 
   adminStats: () => request<Record<string, number>>("/api/admin/stats"),
   adminUsers: (q = "", page = 0) =>

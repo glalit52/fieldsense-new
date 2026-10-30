@@ -139,3 +139,38 @@ test("activities are private to the field's owner", async () => {
   const gone = await app.inject({ method: "DELETE", url: `/api/fields/${f.id}/activities/${res.json().activities[0].id}`, headers: { cookie: a.cookie } });
   assert.equal(gone.json().activities.length, 0);
 });
+
+test("check history is per user in MongoDB; alert emails are a user setting; deleting the account removes both", async () => {
+  const fixture = JSON.parse(fs.readFileSync(new URL("./fixtures/report-ludhiana.json", import.meta.url), "utf8"));
+  const { storeReport } = await import("../src/lib/reports.ts");
+  // Signup is rate limited (10/min) and this file already signs up that many, so these users are made directly.
+  const { User } = await import("../src/models/User.ts");
+  const { signToken } = await import("../src/lib/auth.ts");
+  const direct = async (email: string) => {
+    const u = await User.create({ name: "History Farmer", email, password: "correct horse" });
+    return { cookie: `fs_session=${signToken(u)}`, user: { id: String(u._id) } };
+  };
+  const a = await direct("history-a@example.com"), b = await direct("history-b@example.com");
+  const f = (await app.inject({ method: "POST", url: "/api/fields", headers: { cookie: a.cookie }, payload: { name: "Canal block", lat: 30.9, lon: 75.85 } })).json();
+  const archived = await app.inject({ method: "POST", url: `/api/fields/${f.id}/checks`, headers: { cookie: a.cookie }, payload: { reportId: storeReport(fixture) } });
+  assert.equal(archived.statusCode, 201, archived.body);
+  const list = (await app.inject({ url: `/api/fields/${f.id}/checks`, headers: { cookie: a.cookie } })).json();
+  assert.equal(list.length, 1);
+  const opened = (await app.inject({ url: `/api/fields/${f.id}/checks/${list[0].id}`, headers: { cookie: a.cookie } })).json();
+  assert.deepEqual(opened.report.crops, fixture.crops, "the full report round-trips through gzip in MongoDB");
+  assert.equal((await app.inject({ url: `/api/fields/${f.id}/checks`, headers: { cookie: b.cookie } })).statusCode, 404, "another user can't list them");
+  assert.equal((await app.inject({ url: `/api/fields/${f.id}/checks/${list[0].id}`, headers: { cookie: b.cookie } })).statusCode, 404);
+  assert.equal((await app.inject({ url: `/api/fields/${f.id}/checks/not-an-id`, headers: { cookie: a.cookie } })).statusCode, 404);
+
+  assert.equal((await app.inject({ url: "/api/alerts" })).statusCode, 401);
+  const before = (await app.inject({ url: "/api/alerts", headers: { cookie: a.cookie } })).json();
+  assert.deepEqual(before.email, { available: false, enabled: false });
+  const set = await app.inject({ method: "PUT", url: "/api/alerts/settings", headers: { cookie: a.cookie }, payload: { email: true } });
+  assert.deepEqual(set.json().email, { available: false, enabled: true });
+  assert.equal((await app.inject({ url: "/api/auth/me", headers: { cookie: a.cookie } })).json().user.alertEmails, true);
+
+  const { FieldCheck } = await import("../src/models/FieldCheck.ts");
+  assert.equal(await FieldCheck.countDocuments({ userId: a.user.id }), 1);
+  await app.inject({ method: "DELETE", url: "/api/auth/me", headers: { cookie: a.cookie }, payload: { password: "correct horse" } });
+  assert.equal(await FieldCheck.countDocuments({ userId: a.user.id }), 0);
+});

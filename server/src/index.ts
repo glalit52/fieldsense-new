@@ -3,6 +3,7 @@ import { buildApp } from "./app.ts";
 import { assertConfig, authEnabled, config } from "./config.ts";
 import { closeDb, dataPersistent } from "./lib/cache.ts";
 import { closeMongo, connectMongo } from "./lib/mongoose.ts";
+import { startAlertScheduler } from "./services/alerts.ts";
 
 assertConfig();
 const app = await buildApp();
@@ -19,6 +20,7 @@ if (!dataPersistent) app.log.warn("SQLite is not on the configured DATA_DIR; cac
 if (config.production && !authEnabled()) app.log.warn("Accounts are off (no MONGO_URI): saved fields are shared by everyone who can reach this server.");
 // Listen first so the platform health check passes while the database is still connecting.
 if (authEnabled()) void connectMongo(app.log);
+startAlertScheduler(app.log);
 
 let shuttingDown = false;
 async function shutdown(signal: string) {

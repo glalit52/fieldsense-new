@@ -13,6 +13,13 @@
 - a **field journal** per field (sowing, fertiliser, spraying, irrigation, tillage, scouting, harvest) with quantities, costs and harvested yield, plus season totals
 - a **portfolio** view across saved fields: total area, average pH, fields needing lime or a lab test, re-checks due, this year's spend; search, sort and side-by-side **compare**
 - **import and export** of fields as GeoJSON (points and outlines, for GIS and farm software) or CSV
+- **check history**: every check of a saved field is archived with its full report, so you can see how pH, the top crops, lime and risks move over the seasons, reopen any past report, and download it as a PDF
+- **season review**: each harvest logged in the journal is compared with the yield the model says that season's weather allowed, separating weather from management (sowing date, fertiliser, pH, water)
+- a **fertiliser plan** (N-P-K) per crop: nutrient balance for a target yield, adjusted by lab P and K, as urea / DAP / MOP with bag counts, a dated split schedule and cost, added to the field journal in one click
+- **crop economics**: gross margin per hectare in dry, typical and good years for every crop, with editable prices and costs (defaults: indicative Indian MSP / mandi prices)
+- **weather and spray alerts** for saved fields (frost, heat, heavy rain, gusts, late blight, disease pressure, spray windows) in an in-app inbox, and by email when Resend is configured
+- a **PDF field report** generated on the server
+- the interface in **English, Hindi, Marathi, Punjabi, Bengali, Tamil and Telugu**; Agris answers in the chosen language
 - an **Admin** page for operators: users, roles and usage stats
 
 It is inspired by agrishieldai.com and extends it: field outlines, cultivar choice, irrigated scenario, forecast operations, seasonal and 2045 outlooks, Sentinel-2 monitoring, multi-source rainfall cross-checks, US field-scale soil survey, and an organisation batch API.
@@ -65,6 +72,9 @@ Everything works with **no keys at all**. Keys only add sources or raise limits.
 | `CONTACT_EMAIL` | Contact email in the User-Agent and support (Default: `lalit@sensegrass.com`); required by the Nominatim and ORNL usage policies |
 | `API_KEYS` | Comma-separated keys required on `/api/v1/batch` (open if unset) |
 | `ADMIN_EMAILS` | Comma-separated emails that get the admin role (Admin page) |
+| `RESEND_API_KEY`, `ALERTS_FROM` | Email weather alerts through [Resend](https://resend.com) to users who opt in (accounts on). `ALERTS_FROM` is the sender, e.g. `FieldSense <alerts@sensegrass.com>` on a domain verified in Resend. Without both, alerts stay in the app. |
+| `ALERTS_ENABLED` | `false` stops the background alert scan (default on: shortly after boot, then every 3 hours, each field once a day) |
+| `APP_URL` | Public URL used in alert emails (defaults to Railway's public domain) |
 | `HOST` | Bind address (default `::`, IPv4 + IPv6) |
 | `LOG_LEVEL` | Fastify log level |
 
@@ -163,6 +173,13 @@ Share of each region's dominant crops that land in the top 10 (latest run 17/25)
 | `POST /api/fields/:id/tests`, `DELETE /api/fields/:id/tests/:testId` | `{date, ph?, organicCarbon?, clay?, p?, k?, notes?}` | lab tests, newest first |
 | `POST /api/fields/:id/activities`, `DELETE /api/fields/:id/activities/:activityId` | `{date, type, crop?, product?, quantity?, unit?, cost?, yieldTPerHa?, notes?}`; `type` is one of sowing, fertiliser, spraying, irrigation, tillage, scouting, harvest, other | field journal, newest first |
 | `POST /api/fields/import` | `{fields: [{name, lat, lon} or {name, polygon}]}` (max 200, all validated before any is saved) | `{created, fields}` |
+| `POST /api/fields/:id/checks` | `{reportId}` | archives a finished check to the field's history and makes it the field's summary; archiving the same report twice is a no-op |
+| `GET /api/fields/:id/checks`, `GET/DELETE /api/fields/:id/checks/:checkId` | | history (newest first, up to 60 per field); one past check's full report with a fresh `reportId` |
+| `GET /api/fields/:id/review` | | journal harvests vs the model's attainable yield for that season, with reasons |
+| `GET /api/fields/:id/report.pdf?check=` | | PDF of the latest (or given) archived check, with the field's history |
+| `POST /api/report.pdf` | `{reportId, fieldName?}` | PDF of any report |
+| `POST /api/nutrients` | `{reportId, cropId?, targetYield?, p?, k?, sowingDate?}` | N-P-K plan: nutrients, products, dated split schedule, notes |
+| `GET /api/alerts`, `POST /api/alerts/read`, `POST /api/alerts/refresh`, `PUT /api/alerts/settings` | `{ids?}` / – / `{email: bool}` | alert inbox for the user's saved fields, mark read, re-scan now, email opt-in |
 | `GET /api/admin/stats`, `GET /api/admin/users?q=&page=`, `PATCH /api/admin/users/:id` | `{role: "user"\|"admin"}` | admins only (accounts on) |
 | `POST /api/auth/signup`, `/login`, `/logout` | `{name, email, password, organization?}` / `{email, password}` | sets an HttpOnly `fs_session` cookie; API clients may send `Authorization: Bearer <token>` |
 | `GET/PATCH/DELETE /api/auth/me`, `POST /api/auth/password` | | profile, edit, delete account (+ all fields, needs `{password}`), change password (signs out other sessions) |

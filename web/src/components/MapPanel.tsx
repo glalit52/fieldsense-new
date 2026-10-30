@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import L from "leaflet";
 import { CircleMarker, LayersControl, MapContainer, Polygon, Polyline, TileLayer, Tooltip, useMap, useMapEvents } from "react-leaflet";
 import { api, type LonLat } from "../lib/api.ts";
+import { useT } from "../lib/i18n.tsx";
 
 interface Props {
   point: { lat: number; lon: number } | null;
@@ -40,6 +41,7 @@ function FlyTo({ target }: { target: { lat: number; lon: number; zoom?: number }
 }
 
 export default function MapPanel({ point, polygon, onPoint, onPolygon, ndviTiles, saved, onOpenSaved }: Props) {
+  const t = useT();
   const [mode, setMode] = useState<"pin" | "draw">("pin");
   const [draft, setDraft] = useState<LonLat[]>([]);
   const [q, setQ] = useState("");
@@ -67,20 +69,20 @@ export default function MapPanel({ point, polygon, onPoint, onPolygon, ndviTiles
     <div className="map-wrap">
       <MapContainer center={point ? [point.lat, point.lon] : [-36.63, 142.16]} zoom={point ? 14 : 4} className="map" worldCopyJump>
         <LayersControl position="topright">
-          <LayersControl.BaseLayer checked name="Satellite">
+          <LayersControl.BaseLayer checked name={t("Satellite")}>
             <TileLayer attribution="Esri, Maxar, Earthstar Geographics" url="https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}" maxZoom={19} />
           </LayersControl.BaseLayer>
-          <LayersControl.BaseLayer name="Map">
+          <LayersControl.BaseLayer name={t("Map")}>
             <TileLayer attribution="© OpenStreetMap" url="https://tile.openstreetmap.org/{z}/{x}/{y}.png" maxZoom={19} />
           </LayersControl.BaseLayer>
-          <LayersControl.BaseLayer name="Terrain">
+          <LayersControl.BaseLayer name={t("Terrain")}>
             <TileLayer attribution="Esri" url="https://server.arcgisonline.com/ArcGIS/rest/services/World_Topo_Map/MapServer/tile/{z}/{y}/{x}" maxZoom={19} />
           </LayersControl.BaseLayer>
-          <LayersControl.Overlay checked name="Place names">
+          <LayersControl.Overlay checked name={t("Place names")}>
             <TileLayer url="https://server.arcgisonline.com/ArcGIS/rest/services/Reference/World_Boundaries_and_Places/MapServer/tile/{z}/{y}/{x}" maxZoom={19} />
           </LayersControl.Overlay>
           {ndviTiles && (
-            <LayersControl.Overlay checked name="Sentinel-2 NDVI (40 days)">
+            <LayersControl.Overlay checked name={t("Sentinel-2 NDVI (40 days)")}>
               <TileLayer url={ndviTiles} opacity={0.75} attribution="Copernicus Sentinel-2 via Google Earth Engine" />
             </LayersControl.Overlay>
           )}
@@ -104,8 +106,8 @@ export default function MapPanel({ point, polygon, onPoint, onPolygon, ndviTiles
       </MapContainer>
 
       <form className="map-search" onSubmit={doSearch}>
-        <input value={q} onChange={(e) => setQ(e.target.value)} placeholder="Search a town, region or paste lat, lon" aria-label="Search location" />
-        <button type="submit">Go</button>
+        <input value={q} onChange={(e) => setQ(e.target.value)} placeholder={t("Search a town, region or paste lat, lon")} aria-label={t("Search location")} />
+        <button type="submit">{t("Go")}</button>
         {results.length > 1 && (
           <ul className="search-results">
             {results.map((r) => <li key={r.name}><button type="button" onClick={() => { setFly({ lat: r.lat, lon: r.lon, zoom: 13 }); setResults([]); }}>{r.name}</button></li>)}
@@ -114,17 +116,17 @@ export default function MapPanel({ point, polygon, onPoint, onPolygon, ndviTiles
       </form>
 
       <div className="map-tools">
-        <button className={mode === "pin" ? "active" : ""} onClick={() => { setMode("pin"); setDraft([]); }} title="Drop a pin">📍 Pin</button>
-        <button className={mode === "draw" ? "active" : ""} onClick={() => { setMode("draw"); setDraft([]); }} title="Outline a field">✏️ Outline field</button>
-        <button onClick={locate} title="Use my location">◎ Where I am</button>
+        <button className={mode === "pin" ? "active" : ""} onClick={() => { setMode("pin"); setDraft([]); }} title={t("Drop a pin")}>📍 {t("Pin")}</button>
+        <button className={mode === "draw" ? "active" : ""} onClick={() => { setMode("draw"); setDraft([]); }} title={t("Outline a field")}>✏️ {t("Outline field")}</button>
+        <button onClick={locate} title={t("Use my location")}>◎ {t("Where I am")}</button>
         {mode === "draw" && (
           <>
-            <button onClick={() => setDraft((d) => d.slice(0, -1))} disabled={!draft.length}>Undo</button>
-            <button className="primary" onClick={finish} disabled={draft.length < 3}>Finish ({draft.length})</button>
+            <button onClick={() => setDraft((d) => d.slice(0, -1))} disabled={!draft.length}>{t("Undo")}</button>
+            <button className="primary" onClick={finish} disabled={draft.length < 3}>{t("Finish ({n})", { n: draft.length })}</button>
           </>
         )}
       </div>
-      {mode === "draw" && <div className="map-hint">Click the field corners, then press Finish.</div>}
+      {mode === "draw" && <div className="map-hint">{t("Click the field corners, then press Finish.")}</div>}
     </div>
   );
 }

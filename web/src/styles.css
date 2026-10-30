@@ -76,7 +76,7 @@ code { background: var(--surface-2); padding: 1px 5px; border-radius: 4px; }
 .report-head h1 { font-size: 24px; } .place { color: var(--muted); font-size: 13px; }
 .head-actions { display: flex; gap: 6px; flex-wrap: wrap; }
 .tabs { display: flex; gap: 4px; border-bottom: 1px solid var(--line); margin-bottom: 16px; overflow-x: auto; }
-.tabs button { border: 0; border-bottom: 2px solid transparent; border-radius: 0; background: none; padding: 8px 12px; white-space: nowrap; color: var(--muted); }
+.tabs button { border: 0; border-bottom: 2px solid transparent; border-radius: 0; background: none; padding: 8px 10px; white-space: nowrap; color: var(--muted); }
 .tabs button.active { border-bottom-color: var(--brand); color: var(--text); font-weight: 600; }
 
 .lime-call { display: inline-block; padding: 6px 14px; border-radius: 999px; font-weight: 700; font-size: 16px; margin-bottom: 10px; }
@@ -630,3 +630,51 @@ tr.active-row td { background: var(--surface-2); }
 .journal .form-row input { width: 120px; }
 .journal .mini-stats div span + span { margin-top: 2px; }
 .actions button.active { border-color: var(--brand); background: var(--surface-2); }
+
+/* ---- Language, alerts bell and inbox ---- */
+.lang-picker { padding: 5px 8px; font-size: 13px; }
+.bell { position: relative; padding: 5px 10px; }
+.bell .badge { position: absolute; top: -6px; right: -6px; min-width: 18px; height: 18px; padding: 0 5px; border-radius: 9px; background: var(--bad); color: #fff; font-size: 11px; font-weight: 700; line-height: 18px; text-align: center; }
+.modal:has(.alerts-panel) { width: min(640px, calc(100vw - 32px)); }
+.alerts-panel { display: flex; flex-direction: column; gap: 10px; max-height: 70vh; overflow-y: auto; overflow-wrap: anywhere; }
+.alerts-panel .toolbar { align-items: flex-start; }
+.switch-row { display: flex; gap: 8px; align-items: center; font-size: 13px; }
+.alert-day h4 { margin: 4px 0 6px; color: var(--text); }
+.alert-day ul { list-style: none; padding: 0; margin: 0; display: flex; flex-direction: column; gap: 6px; }
+.alert { display: flex; gap: 10px; align-items: flex-start; padding: 8px 10px; border-radius: 8px; border-left: 4px solid var(--series-1); background: var(--surface-2); }
+.alert.danger { border-color: var(--bad); } .alert.warn { border-color: var(--warn); }
+.alert.unread { box-shadow: inset 0 0 0 1px var(--line); font-weight: 500; }
+.alert .icon { font-size: 18px; line-height: 1.2; }
+.alert .field-link { margin: 0; font-weight: 700; font-size: 13px; }
+
+/* ---- Field history, archived banner ---- */
+.history .detail-grid { margin: 8px 0 12px; }
+.changes { background: var(--surface-2); border-radius: 8px; padding: 8px 12px; margin: 6px 0 10px; font-size: 13px; }
+.changes ul { margin: 4px 0 0; padding-left: 18px; }
+.changes li.good { color: var(--good); } .changes li.bad { color: var(--bad); }
+.archived-banner { display: flex; gap: 12px; align-items: center; justify-content: space-between; flex-wrap: wrap; padding: 10px 14px; margin-bottom: 10px; border-radius: var(--radius); background: #2a78d61a; border: 1px solid #2a78d655; }
+
+/* ---- Season review ---- */
+.season-review { margin-top: 14px; display: flex; flex-direction: column; gap: 10px; }
+.season { padding: 12px 14px; }
+.season-head { display: flex; gap: 8px; align-items: baseline; flex-wrap: wrap; }
+.pill { margin-left: auto; color: #fff; font-size: 12px; font-weight: 700; padding: 1px 10px; border-radius: 10px; }
+.yield-bars { display: flex; flex-direction: column; gap: 3px; margin: 8px 0; font-size: 12px; }
+.yield-bar { display: grid; grid-template-columns: 150px 1fr 44px; gap: 8px; align-items: center; }
+.yield-bar .track { height: 10px; background: var(--surface-2); border-radius: 5px; overflow: hidden; }
+.yield-bar .track span { display: block; height: 100%; border-radius: 5px; }
+.yield-bar b { text-align: right; font-variant-numeric: tabular-nums; }
+.reasons { margin: 6px 0 0; padding-left: 18px; font-size: 13px; }
+.reasons li { margin: 2px 0; }
+
+/* ---- Fertiliser plan and profit ---- */
+.schedule { margin: 4px 0 8px; padding-left: 20px; display: flex; flex-direction: column; gap: 6px; }
+.stat .value small { font-size: 13px; font-weight: 500; color: var(--muted); }
+.econ td { font-variant-numeric: tabular-nums; }
+.econ td:nth-child(2), .econ td:nth-child(5) { white-space: nowrap; }
+.econ td.editable { cursor: pointer; text-decoration: underline dotted var(--muted); text-underline-offset: 3px; }
+
+@media (max-width: 900px) {
+  .yield-bar { grid-template-columns: 110px 1fr 40px; }
+}
+@media print { .archived-banner, .bell, .lang-picker { display: none !important; } }
