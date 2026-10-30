@@ -1,7 +1,7 @@
 import { useMemo, useState } from "react";
 import { Bar, BarChart, Cell, ReferenceLine, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
 import type { Report } from "../lib/api.ts";
-import { money, usePrices } from "../lib/economics.ts";
+import { money, PRICES_AS_OF, usePrices } from "../lib/economics.ts";
 import { f } from "../lib/format.ts";
 import { useT } from "../lib/i18n.tsx";
 
@@ -48,7 +48,7 @@ export default function EconomicsTab({ r, onFertiliser }: { r: Report; onFertili
         <span className="toolbar-gap" />
         <button className="link" onClick={() => confirm(t("Reset all prices and costs to the defaults?")) && reset()}>{t("Reset prices")}</button>
       </div>
-      <p className="muted small">{t("Gross margin = modelled yield × price − cost of cultivation{water}. Yields are this field's dry (1 year in 5), typical and good (1 in 5) seasons. Prices default to indicative Indian MSP / mandi rates and costs to typical paid-out costs per hectare: click a row's numbers to use your own.", { water: irrigated ? t(" − irrigation water") : "" })}</p>
+      <p className="muted small">{t("Gross margin = modelled yield × price − cost of cultivation{water}. Yields are this field's dry (1 year in 5), typical and good (1 in 5) seasons. Prices default to Indian MSP / mandi rates and costs to typical paid-out costs per hectare: click a row's numbers to use your own.", { water: irrigated ? t(" − irrigation water") : "" })}</p>
 
       {chart.length > 0 && (
         <ResponsiveContainer width="100%" height={220}>
@@ -103,6 +103,7 @@ export default function EconomicsTab({ r, onFertiliser }: { r: Report; onFertili
         </table>
       </div>
       <p className="muted small">{t("Margins exclude land rent, your own labour and price swings. Use them to compare crops on this field, not as a forecast of profit.")}</p>
+      <p className="muted small">{t("Default prices: Government of India {basis}; other crops are indicative mandi prices.", { basis: PRICES_AS_OF })}</p>
     </div>
   );
 }
